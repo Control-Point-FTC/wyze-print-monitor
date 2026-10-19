@@ -85,3 +85,27 @@ def test_save_redacts_rtsp_credentials(tmp_path):
         data = json.load(fh)
     assert data["rtsp_url"] == "rtsp://***@192.168.1.10/live"
     assert "s3cret" not in json.dumps(data)
+
+
+def test_secrets_fail_soft_without_keyring_backend(monkeypatch):
+    """On machines with no keyring backend (e.g. headless Linux) the secret
+    helpers must not raise — secrets simply don't persist there."""
+    import sys
+    import types
+
+    import wyze_print_monitor.config as config
+
+    class NoKeyringError(Exception):
+        pass
+
+    fake_errors = types.SimpleNamespace(NoKeyringError=NoKeyringError, InitError=NoKeyringError)
+    fake_keyring = types.SimpleNamespace(
+        errors=fake_errors,
+        get_password=lambda *a, **k: (_ for _ in ()).throw(NoKeyringError("no backend")),
+        set_password=lambda *a, **k: (_ for _ in ()).throw(NoKeyringError("no backend")),
+    )
+    monkeypatch.setitem(sys.modules, "keyring", fake_keyring)
+    monkeypatch.setitem(sys.modules, "keyring.errors", fake_errors)
+
+    assert config.get_secret("anything") is None
+    config.save_secret("anything", "value")  # must not raise

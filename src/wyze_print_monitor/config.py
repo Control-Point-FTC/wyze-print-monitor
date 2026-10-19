@@ -118,16 +118,29 @@ def save_settings(settings: Settings, path: str | None = None) -> None:
     os.replace(tmp, path)
 
 
+def _keyring_exc():
+    import keyring.errors
+
+    return (keyring.errors.NoKeyringError, keyring.errors.InitError)
+
+
 def save_secret(name: str, value: str) -> None:
+    """Best-effort: silently skip on machines with no keyring backend."""
     import keyring
 
-    keyring.set_password(KEYRING_SERVICE, name, value)
+    try:
+        keyring.set_password(KEYRING_SERVICE, name, value)
+    except _keyring_exc():
+        pass
 
 
 def get_secret(name: str) -> str | None:
     import keyring
 
-    return keyring.get_password(KEYRING_SERVICE, name)
+    try:
+        return keyring.get_password(KEYRING_SERVICE, name)
+    except _keyring_exc():
+        return None
 
 
 def delete_secret(name: str) -> None:
