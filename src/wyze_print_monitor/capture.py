@@ -19,6 +19,28 @@ OPEN_TIMEOUT_MS = 5000
 READ_TIMEOUT_MS = 5000
 FFMPEG_OPTIONS_ENV = "OPENCV_FFMPEG_CAPTURE_OPTIONS"
 RTSP_OVER_TCP = "rtsp_transport;tcp"
+# Options the user set themselves (captured once, before any reader thread
+# touches the variable): we add to them and always restore them.
+_USER_FFMPEG_OPTIONS = os.environ.get(FFMPEG_OPTIONS_ENV)
+
+
+def transport_attempts(user_options: str | None) -> list[str | None]:
+    """FFmpeg option strings to try, in order (``None`` = no options).
+
+    TCP first, then the user's own options / FFmpeg's default. A user who
+    already picked an ``rtsp_transport`` keeps exactly their setting.
+    """
+    if user_options and "rtsp_transport" in user_options:
+        return [user_options]
+    tcp = f"{user_options}|{RTSP_OVER_TCP}" if user_options else RTSP_OVER_TCP
+    return [tcp, user_options or None]
+
+
+def _set_ffmpeg_options(options: str | None) -> None:
+    if options:
+        os.environ[FFMPEG_OPTIONS_ENV] = options
+    else:
+        os.environ.pop(FFMPEG_OPTIONS_ENV, None)
 
 
 class StreamReader(QThread):
@@ -105,18 +127,18 @@ class StreamReader(QThread):
             cv2.CAP_PROP_READ_TIMEOUT_MSEC, READ_TIMEOUT_MS,
         ]
         cap = None
-        for options in (RTSP_OVER_TCP, None):
-            # OpenCV's FFmpeg backend only takes demuxer options from this
-            # environment variable, read at open time.
-            if options:
-                os.environ[FFMPEG_OPTIONS_ENV] = options
-            else:
-                os.environ.pop(FFMPEG_OPTIONS_ENV, None)
-            cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG, params)
-            if cap.isOpened() or self._stop_requested:
-                return cap
-            cap.release()
-        return cap
+        try:
+            for options in transport_attempts(_USER_FFMPEG_OPTIONS):
+                # OpenCV's FFmpeg backend only takes demuxer options from this
+                # environment variable, read at open time.
+                _set_ffmpeg_options(options)
+                cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG, params)
+                if cap.isOpened() or self._stop_requested:
+                    return cap
+                cap.release()
+            return cap
+        finally:
+            _set_ffmpeg_options(_USER_FFMPEG_OPTIONS)
 
     def _sleep(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
