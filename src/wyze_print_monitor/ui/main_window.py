@@ -1,8 +1,10 @@
-"""Main window: live monitor on the left, camera control panel on the right."""
+"""Main window: eufyMake Studio Device-tab layout — camera sidebar on the left,
+live monitor in the center, Control + Camera panels on the right."""
 from __future__ import annotations
 
 import datetime
 import os
+import time
 
 import cv2
 import numpy as np
@@ -10,18 +12,22 @@ from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -82,6 +88,8 @@ class MainWindow(QMainWindow):
         self._compile_worker: TimelapseCompileWorker | None = None
         self._cameras: list[CameraInfo] = []
         self._last_frame: np.ndarray | None = None
+        self._rec_start: float | None = None
+        self._stream_state = "idle"
 
         self._build_ui()
         self._apply_always_on_top()
@@ -93,21 +101,63 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self._build_menus()
 
+        # View tab bar, eufyMake "Slice | Device" style (single Monitor view).
+        self.tab_bar = QTabBar()
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.addTab("Monitor")
+
+        main = QWidget()
+        main_layout = QVBoxLayout(main)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self.tab_bar)
+
         splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(self._build_sidebar())
+        splitter.addWidget(self._build_monitor_pane())
+        splitter.addWidget(self._build_right_pane())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        main_layout.addWidget(splitter, 1)
 
-        # ---- left: monitor (eufyMake-style full-width header bar + body) ----
+        self.setCentralWidget(main)
+        self.statusBar().showMessage("Ready")
+        self._set_controls_enabled(False)
+
+    def _build_sidebar(self) -> QWidget:
+        """Left device list, eufyMake "My Printer" style. Selects the camera."""
+        side = QWidget()
+        side.setFixedWidth(210)
+        layout = QVBoxLayout(side)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        title = QLabel("My Camera")
+        title.setObjectName("paneHeader")
+        layout.addWidget(title)
+
+        self.camera_list = QListWidget()
+        self.camera_list.setObjectName("cameraList")
+        self.camera_list.currentRowChanged.connect(self._on_sidebar_camera_selected)
+        layout.addWidget(self.camera_list, 1)
+        return side
+
+    def _build_monitor_pane(self) -> QWidget:
+        """Center: Monitor video panel + Session stats, eufyMake style."""
         monitor = QWidget()
-        monitor_layout = QVBoxLayout(monitor)
-        monitor_layout.setContentsMargins(0, 0, 0, 0)
-        monitor_layout.setSpacing(0)
+        layout = QVBoxLayout(monitor)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        monitor_header = QLabel("Monitor")
-        monitor_header.setObjectName("paneHeader")
-        monitor_layout.addWidget(monitor_header)
+        header = QLabel("Monitor")
+        header.setObjectName("paneHeader")
+        layout.addWidget(header)
 
-        monitor_body = QWidget()
-        body_layout = QVBoxLayout(monitor_body)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
         body_layout.setContentsMargins(8, 8, 8, 8)
+        body_layout.setSpacing(0)
 
         self.video_label = QLabel("No signal — set your RTSP URL in Settings.")
         self.video_label.setObjectName("videoLabel")
@@ -115,17 +165,99 @@ class MainWindow(QMainWindow):
         self.video_label.setMinimumSize(480, 270)
         body_layout.addWidget(self.video_label, 1)
 
-        info_row = QHBoxLayout()
+        # Thin player bar under the picture: status pill left, info right.
+        player_bar = QWidget()
+        player_bar.setObjectName("playerBar")
+        bar = QHBoxLayout(player_bar)
+        bar.setContentsMargins(8, 4, 8, 4)
         self.status_pill = QLabel("Idle")
         self.status_pill.setObjectName("statusPill")
         self._set_pill("idle")
         self.stream_info_label = QLabel("")
         self.stream_info_label.setStyleSheet("color: #9a9ea5;")
-        info_row.addWidget(self.status_pill)
-        info_row.addWidget(self.stream_info_label, 1)
-        body_layout.addLayout(info_row)
+        self.stream_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bar.addWidget(self.status_pill)
+        bar.addWidget(self.stream_info_label, 1)
+        body_layout.addWidget(player_bar)
+        layout.addWidget(body, 1)
 
-        btn_row = QHBoxLayout()
+        # Session panel, eufyMake "Progress" style: live capture stats.
+        session_header = QLabel("Session")
+        session_header.setObjectName("paneHeader")
+        layout.addWidget(session_header)
+        session = QWidget()
+        form = QFormLayout(session)
+        form.setContentsMargins(12, 8, 12, 8)
+        self.session_stream = QLabel("Idle")
+        self.session_stream.setObjectName("sessionValue")
+        self.session_rec = QLabel("—")
+        self.session_rec.setObjectName("sessionValue")
+        self.session_timelapse = QLabel("—")
+        self.session_timelapse.setObjectName("sessionValue")
+        stream_cap = QLabel("Stream")
+        stream_cap.setObjectName("sessionCaption")
+        rec_cap = QLabel("Recording")
+        rec_cap.setObjectName("sessionCaption")
+        tl_cap = QLabel("Timelapse")
+        tl_cap.setObjectName("sessionCaption")
+        form.addRow(stream_cap, self.session_stream)
+        form.addRow(rec_cap, self.session_rec)
+        form.addRow(tl_cap, self.session_timelapse)
+        layout.addWidget(session)
+        return monitor
+
+    def _stat_card(self, caption: str) -> tuple[QLabel, QLabel, QFrame]:
+        """Big readout card, eufyMake temperature-card style."""
+        card = QFrame()
+        card.setObjectName("statCard")
+        vbox = QVBoxLayout(card)
+        vbox.setContentsMargins(12, 10, 12, 10)
+        value = QLabel("—")
+        value.setObjectName("statValue")
+        value.setAlignment(Qt.AlignCenter)
+        cap = QLabel(caption)
+        cap.setObjectName("statCaption")
+        cap.setAlignment(Qt.AlignCenter)
+        vbox.addWidget(value)
+        vbox.addWidget(cap)
+        return value, cap, card
+
+    def _build_right_pane(self) -> QWidget:
+        """Right column: Control panel, then the Camera panel where eufyMake
+        puts its "Others" section."""
+        right = QWidget()
+        right.setFixedWidth(340)
+        layout = QVBoxLayout(right)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        control_header = QLabel("Control")
+        control_header.setObjectName("paneHeader")
+        layout.addWidget(control_header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(0)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Big readout cards, eufyMake temperature-card style.
+        cards = QHBoxLayout()
+        self.stat_stream_value, self.stat_stream_cap, stream_card = self._stat_card("Stream")
+        self.stat_video_value, self.stat_video_cap, video_card = self._stat_card("Video")
+        self.stat_stream_cap.setText("State")
+        cards.addWidget(stream_card)
+        cards.addWidget(video_card)
+        content_layout.addLayout(cards)
+
+        # Capture actions, 2x2 grid.
+        cap_grid = QGridLayout()
+        cap_grid.setSpacing(8)
         self.snapshot_btn = QPushButton("Snapshot")
         self.snapshot_btn.clicked.connect(self._on_snapshot)
         self.record_btn = QPushButton("Record")
@@ -136,47 +268,32 @@ class MainWindow(QMainWindow):
         self.timelapse_btn.clicked.connect(self._on_timelapse_toggled)
         self.fullscreen_btn = QPushButton("Fullscreen")
         self.fullscreen_btn.clicked.connect(self._toggle_fullscreen)
-        for b in (self.snapshot_btn, self.record_btn, self.timelapse_btn, self.fullscreen_btn):
-            btn_row.addWidget(b)
-        btn_row.addStretch(1)
-        body_layout.addLayout(btn_row)
-        monitor_layout.addWidget(monitor_body, 1)
-        splitter.addWidget(monitor)
+        cap_grid.addWidget(self.snapshot_btn, 0, 0)
+        cap_grid.addWidget(self.record_btn, 0, 1)
+        cap_grid.addWidget(self.timelapse_btn, 1, 0)
+        cap_grid.addWidget(self.fullscreen_btn, 1, 1)
+        content_layout.addLayout(cap_grid)
+        panel_layout.addWidget(content)
 
-        # ---- right: control panel ----
-        right = QWidget()
-        right.setFixedWidth(340)
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
+        # Camera device controls, in eufyMake's "Others" position.
+        camera_header = QLabel("Camera")
+        camera_header.setObjectName("paneHeader")
+        panel_layout.addWidget(camera_header)
 
-        control_header = QLabel("Control")
-        control_header.setObjectName("paneHeader")
-        right_layout.addWidget(control_header)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        panel = QWidget()
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(8, 8, 8, 8)
-        panel_layout.addStretch(0)
-
-        panel_layout.addWidget(self._connection_group())
-        panel_layout.addWidget(self._camera_group())
-        panel_layout.addWidget(self._siren_spotlight_group())
-        panel_layout.addWidget(self._detection_group())
-        panel_layout.addWidget(self._device_info_group())
-        panel_layout.addStretch(1)
+        content2 = QWidget()
+        content2_layout = QVBoxLayout(content2)
+        content2_layout.setContentsMargins(8, 8, 8, 8)
+        content2_layout.addWidget(self._connection_group())
+        content2_layout.addWidget(self._camera_group())
+        content2_layout.addWidget(self._siren_spotlight_group())
+        content2_layout.addWidget(self._detection_group())
+        content2_layout.addWidget(self._device_info_group())
+        content2_layout.addStretch(1)
+        panel_layout.addWidget(content2)
 
         scroll.setWidget(panel)
-        right_layout.addWidget(scroll, 1)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        self.setCentralWidget(splitter)
-
-        self.statusBar().showMessage("Ready")
-        self._set_controls_enabled(False)
+        layout.addWidget(scroll, 1)
+        return right
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -209,13 +326,30 @@ class MainWindow(QMainWindow):
         self.on_top_action.setChecked(self.settings.always_on_top)
         self.on_top_action.triggered.connect(self._toggle_always_on_top)
         view_menu.addAction(self.on_top_action)
+        self.fullscreen_action = QAction("Fullscreen", self, checkable=True)
+        self.fullscreen_action.triggered.connect(self._toggle_fullscreen)
+        view_menu.addAction(self.fullscreen_action)
+
+        settings_menu = self.menuBar().addMenu("Settings")
+        settings_menu.addAction(settings_action)
+
+        help_menu = self.menuBar().addMenu("Help")
+        about_action = QAction("About Wyze Print Monitor", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About Wyze Print Monitor",
+            "Wyze Print Monitor v1\n\nLive RTSP view plus Wyze camera controls "
+            "for 3D-print monitoring.\nSecrets live in the OS keyring, never on disk.",
+        )
 
     def _connection_group(self) -> QGroupBox:
+        # Camera selection lives in the left sidebar; this group only connects.
         box = QGroupBox("Connection")
         layout = QVBoxLayout(box)
-        self.camera_combo = QComboBox()
-        self.camera_combo.currentIndexChanged.connect(self._on_camera_selected)
-        layout.addWidget(self.camera_combo)
         row = QHBoxLayout()
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setObjectName("accentButton")
@@ -343,9 +477,48 @@ class MainWindow(QMainWindow):
             "stopped": "Stopped",
             "error": "Error",
         }
+        self._stream_state = state
         self.status_pill.setText(labels.get(state, state))
         self._set_pill(state)
+        self.session_stream.setText(labels.get(state, state))
+        self._update_stat_cards()
         self.statusBar().showMessage(detail, 5000)
+
+    def _update_stat_cards(self) -> None:
+        state_labels = {
+            "connecting": "…",
+            "live": "LIVE",
+            "reconnecting": "…",
+            "stopped": "Idle",
+            "error": "Error",
+            "idle": "Idle",
+        }
+        self.stat_stream_value.setText(state_labels.get(self._stream_state, "Idle"))
+        if self._reader is not None:
+            w, h = self._reader.frame_size
+            fps = self._reader.measured_fps
+            if w and h:
+                self.stat_video_value.setText(f"{fps:.0f} fps")
+                self.stat_video_cap.setText(f"{w} × {h}")
+                return
+        self.stat_video_value.setText("—")
+        self.stat_video_cap.setText("Video")
+
+    def _update_session_panel(self) -> None:
+        if self._recorder is not None and self._rec_start is not None:
+            elapsed = int(time.monotonic() - self._rec_start)
+            self.session_rec.setText(
+                f"● {elapsed // 60:02d}:{elapsed % 60:02d}"
+                f" · {self._recorder.frames_written} frames"
+            )
+        else:
+            self.session_rec.setText("—")
+        if self._timelapse is not None:
+            self.session_timelapse.setText(
+                f"{self._timelapse.saved} frames · every {self._timelapse.interval_sec}s"
+            )
+        else:
+            self.session_timelapse.setText("—")
 
     def _on_frame(self, frame: np.ndarray) -> None:
         self._last_frame = frame
@@ -354,6 +527,8 @@ class MainWindow(QMainWindow):
             fps = self._reader.measured_fps
             if w and h:
                 self.stream_info_label.setText(f"{w}×{h}  •  {fps:.0f} fps")
+        self._update_stat_cards()
+        self._update_session_panel()
 
         if self._recorder is not None:
             try:
@@ -410,6 +585,7 @@ class MainWindow(QMainWindow):
             # time instead of a fixed (wrong) 20 fps.
             fps = self._reader.measured_fps if self._reader is not None else 0.0
             self._recorder = ClipRecorder(path, fps=fps or 20.0)
+            self._rec_start = time.monotonic()
             self.record_btn.setText("Stop recording")
             self.statusBar().showMessage("Recording…", 3000)
         else:
@@ -418,6 +594,7 @@ class MainWindow(QMainWindow):
                 count = self._recorder.frames_written
                 self._recorder.close()
                 self._recorder = None
+                self._rec_start = None
                 self.statusBar().showMessage(
                     f"Saved clip ({count} frames): {path}", 8000
                 )
@@ -475,6 +652,7 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
+        self.fullscreen_action.setChecked(self.isFullScreen())
 
     # ------------------------------------------------------------------ wyze
     def _auto_connect(self) -> None:
@@ -539,34 +717,48 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Camera list failed", error)
                 return
             self._cameras = result or []
-            # Block signals while rebuilding: adding the first item would
-            # otherwise fire currentIndexChanged, which overwrites the saved
-            # camera_mac with the first camera before we restore the selection.
-            self.camera_combo.blockSignals(True)
+            # Block signals while rebuilding: selecting the first row would
+            # otherwise fire currentRowChanged, which overwrites the saved
+            # camera_mac before we restore the selection.
+            self.camera_list.blockSignals(True)
             try:
-                self.camera_combo.clear()
+                self.camera_list.clear()
                 for cam in self._cameras:
-                    self.camera_combo.addItem(
-                        f"{cam.nickname} ({cam.product_model})", cam.mac
-                    )
-                if self.settings.camera_mac:
-                    index = self.camera_combo.findData(self.settings.camera_mac)
-                    if index >= 0:
-                        self.camera_combo.setCurrentIndex(index)
+                    item = QListWidgetItem(f"{cam.nickname}\n{cam.product_model}")
+                    item.setData(Qt.UserRole, cam.mac)
+                    self.camera_list.addItem(item)
+                self._select_sidebar_camera_from_settings()
             finally:
-                self.camera_combo.blockSignals(False)
+                self.camera_list.blockSignals(False)
             self._update_connection_ui()
 
         self.controller.list_cameras(done)
 
-    def _on_camera_selected(self) -> None:
+    def _select_sidebar_camera_from_settings(self) -> None:
+        if not self._cameras or not self.settings.camera_mac:
+            return
+        for row in range(self.camera_list.count()):
+            if self.camera_list.item(row).data(Qt.UserRole) == self.settings.camera_mac:
+                self.camera_list.setCurrentRow(row)
+                return
+
+    def _on_sidebar_camera_selected(self) -> None:
         self._update_connection_ui()
 
+    def _selected_camera(self) -> CameraInfo | None:
+        row = self.camera_list.currentRow()
+        if row < 0:
+            return None
+        mac = self.camera_list.item(row).data(Qt.UserRole)
+        return next((c for c in self._cameras if c.mac == mac), None)
+
     def _update_connection_ui(self) -> None:
-        mac = self.camera_combo.currentData()
-        cam = next((c for c in self._cameras if c.mac == mac), None)
+        cam = self._selected_camera()
         if cam is None:
-            self.conn_label.setText("Not connected to Wyze.")
+            if self.controller.logged_in:
+                self.conn_label.setText("Select a camera on the left.")
+            else:
+                self.conn_label.setText("Not connected to Wyze.")
             self._set_controls_enabled(False)
             return
         self.settings.camera_mac = cam.mac
@@ -689,14 +881,7 @@ class MainWindow(QMainWindow):
             if self.controller.logged_in:
                 self._on_refresh_cameras()
             else:
-                self._refresh_camera_combo_from_settings()
-
-    def _refresh_camera_combo_from_settings(self) -> None:
-        if not self._cameras or not self.settings.camera_mac:
-            return
-        index = self.camera_combo.findData(self.settings.camera_mac)
-        if index >= 0:
-            self.camera_combo.setCurrentIndex(index)
+                self._select_sidebar_camera_from_settings()
 
     def _forget_credentials(self) -> None:
         answer = QMessageBox.question(

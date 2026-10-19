@@ -122,4 +122,64 @@ QScrollArea {{ border: none; background-color: {BG_APP}; }}
 QScrollBar:vertical {{ background: {BG_APP}; width: 10px; }}
 QScrollBar::handle:vertical {{ background: #3d4148; border-radius: 5px; min-height: 20px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+
+/* eufyMake-style view tab bar ("Monitor" active, green underline). */
+QTabBar {{ background: {BG_APP}; }}
+QTabBar::tab {{
+    background: transparent;
+    color: {TEXT_DIM};
+    font-size: 14px;
+    padding: 10px 28px;
+    margin: 0 8px;
+    border: none;
+}}
+QTabBar::tab:selected {{
+    color: {GREEN_TEXT};
+    border-bottom: 2px solid {GREEN};
+}}
+QTabBar::tab:!selected:hover {{ color: {TEXT}; }}
+
+/* Left device sidebar, eufyMake "My Printer" style. */
+QListWidget#cameraList {{
+    background: {BG_PANEL};
+    border: none;
+    outline: none;
+}}
+QListWidget#cameraList::item {{
+    padding: 10px 12px;
+    border: none;
+    border-left: 3px solid transparent;
+}}
+QListWidget#cameraList::item:hover {{ background: {BG_HEADER}; }}
+QListWidget#cameraList::item:selected {{
+    background: rgba(111, 191, 95, 0.16);
+    color: {TEXT};
+    border-left: 3px solid {GREEN};
+}}
+
+/* Big readout cards, eufyMake temperature-card style. */
+QFrame#statCard {{
+    background: {BG_PANEL};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+}}
+QLabel#statValue {{
+    background: transparent;
+    font-size: 26px;
+    font-weight: 700;
+    color: #e8eaec;
+}}
+QLabel#statCaption {{
+    background: transparent;
+    font-size: 12px;
+    color: {TEXT_DIM};
+}}
+
+/* Thin video info bar under the picture, eufyMake player-bar style. */
+QWidget#playerBar {{
+    background: {BG_HEADER};
+    border: none;
+}}
+QLabel#sessionValue {{ color: {TEXT}; font-weight: 600; }}
+QLabel#sessionCaption {{ color: {TEXT_DIM}; }}
 """
