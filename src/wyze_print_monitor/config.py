@@ -124,15 +124,22 @@ def _keyring_exc():
     return (keyring.errors.NoKeyringError, keyring.errors.InitError)
 
 
+# In-memory fallback for machines with no keyring backend: secrets saved here
+# work for the rest of the session but don't survive a restart.
+_session_secrets: dict[str, str] = {}
+
+
 def save_secret(name: str, value: str) -> bool:
-    """Best-effort: returns False on machines with no keyring backend, so
-    callers can warn instead of silently losing the secret on restart."""
+    """Best-effort: returns False on machines with no keyring backend, in
+    which case the secret is kept in memory for this session only."""
     import keyring
 
     try:
         keyring.set_password(KEYRING_SERVICE, name, value)
     except _keyring_exc():
+        _session_secrets[name] = value
         return False
+    _session_secrets.pop(name, None)
     return True
 
 
@@ -142,10 +149,11 @@ def get_secret(name: str) -> str | None:
     try:
         return keyring.get_password(KEYRING_SERVICE, name)
     except _keyring_exc():
-        return None
+        return _session_secrets.get(name)
 
 
 def delete_secret(name: str) -> None:
+    _session_secrets.pop(name, None)
     import keyring
 
     try:

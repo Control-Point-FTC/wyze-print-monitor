@@ -234,9 +234,9 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Secrets not saved",
-                "No OS keyring is available, so the passwords and API keys "
-                "were NOT saved and will not survive a restart. "
-                "Everything still works for this session.",
+                "No OS keyring is available, so passwords and API keys are "
+                "kept only in memory: they work for this session but will "
+                "not survive a restart.",
             )
         if autostart.supported() and self.autostart_check.isEnabled():
             try:

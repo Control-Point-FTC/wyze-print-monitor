@@ -109,3 +109,6 @@ def test_secrets_fail_soft_without_keyring_backend(monkeypatch):
 
     assert config.get_secret("anything") is None
     assert config.save_secret("anything", "value") is False  # reports failure
+    assert config.get_secret("anything") == "value"  # in-memory session fallback
+    config.delete_secret("anything")
+    assert config.get_secret("anything") is None
