@@ -805,6 +805,12 @@ class MainWindow(QMainWindow):
                     item.setData(Qt.UserRole, cam.mac)
                     self.camera_list.addItem(item)
                 self._select_sidebar_camera_from_settings()
+                if self.camera_list.currentRow() < 0 and self.camera_list.count() == 1:
+                    # Nothing saved (first login) and only one camera: it's
+                    # the one. Otherwise every control would stay disabled
+                    # until the user clicks it — and the Studio dock hides
+                    # the picker when there's a single camera.
+                    self.camera_list.setCurrentRow(0)
             finally:
                 self.camera_list.blockSignals(False)
             self._update_connection_ui()

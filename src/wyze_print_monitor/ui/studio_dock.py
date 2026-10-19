@@ -387,7 +387,9 @@ class StudioDock(QObject):
         self._layout: win.StudioLayout | None = None
         self._last_search = 0.0
         self._last_relocate = 0.0
-        self._printer_ok = True
+        # Is the configured printer selected in Studio? None = not read yet.
+        self._printer_ok: bool | None = None
+        self._printer_row = main.settings.dock_printer_row
         self._row_tick = 0
         self._placed: dict[int, tuple] = {}
         self._status_until = 0.0
@@ -414,8 +416,18 @@ class StudioDock(QObject):
         # otherwise it quits as before.
         self.main.hide_on_close = settings.dock_in_studio and self._layout is not None
         if not settings.dock_in_studio:
+            was_attached = self.attached
             self.detach()
+            if was_attached:
+                # Embedding was just switched off: the full window is now
+                # the only place the live view lives, so bring it back.
+                self.main.show_window()
             return
+        if settings.dock_printer_row != self._printer_row:
+            # A decision made for another printer row says nothing about this
+            # one: re-check before showing anything.
+            self._printer_row = settings.dock_printer_row
+            self._printer_ok = None
         now = time.monotonic()
         layout = self._layout
         if layout is None or not all(
@@ -432,6 +444,7 @@ class StudioDock(QObject):
                 return
             self._layout = layout
             self._last_relocate = now
+            self._printer_ok = None  # a (re)started Studio: read the selection afresh
         elif now - self._last_relocate > RELOCATE_EVERY_S or not all(
             win.is_window(r) for r in layout.printer_rows
         ):
@@ -452,14 +465,16 @@ class StudioDock(QObject):
             and win.is_visible(layout.others_card)
         )
         if on_device_tab:
-            # Sampling the screen is the slow part: every other tick is plenty.
+            # Sampling the screen is the slow part: every other tick is plenty
+            # once we know the answer, but read every tick until we do.
             self._row_tick = (self._row_tick + 1) % 2
-            if self._row_tick == 0:
+            if self._row_tick == 0 or self._printer_ok is None:
                 selected = win.selected_row_index([win.row_color(r) for r in layout.printer_rows])
                 self._printer_ok = win.camera_printer_selected(
                     selected, settings.dock_printer_row, self._printer_ok
                 )
-        want = on_device_tab and self._printer_ok
+        # Only a confirmed match shows the panels; unknown stays hidden.
+        want = on_device_tab and self._printer_ok is True
         if want and not self.attached:
             self._attach(layout)
         if not self.attached:

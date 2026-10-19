@@ -44,6 +44,12 @@ def test_unknown_selection_keeps_previous_decision():
     assert camera_printer_selected(None, configured_row=1, previous=False) is False
 
 
+def test_never_shows_before_the_printer_was_read():
+    """Covered sidebar / no rows on startup must not count as a match."""
+    assert camera_printer_selected(None, configured_row=1, previous=None) is None
+    assert camera_printer_selected(0, configured_row=1, previous=None) is True
+
+
 def test_pick_printer_rows_filters_and_sorts():
     sidebar = (15, 111, 258, 895)
     header_bottom = 151

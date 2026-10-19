@@ -47,10 +47,17 @@ def selected_row_index(colors: list[tuple[int, int, int] | None]) -> int | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def camera_printer_selected(selected: int | None, configured_row: int, previous: bool) -> bool:
+def camera_printer_selected(
+    selected: int | None, configured_row: int, previous: bool | None
+) -> bool | None:
     """Should the camera panels show? ``configured_row`` is 1-based, 0 = any
-    printer. An unknown selection keeps the previous decision so a briefly
-    covered sidebar doesn't make the panels flicker."""
+    printer. Returns None while that's still unknown.
+
+    An unknown selection (sidebar covered, rows not found) keeps the previous
+    *confirmed* decision so a briefly covered sidebar doesn't make the panels
+    flicker — but never invents one: until the selected printer has actually
+    been read, the answer stays None and the panels stay hidden.
+    """
     if configured_row <= 0:
         return True
     if selected is None:
