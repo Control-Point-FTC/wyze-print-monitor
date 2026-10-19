@@ -50,3 +50,69 @@ def test_stop_reports_a_thread_that_did_not_exit():
 
     reader.wait_result = True
     assert reader.stop() is True
+
+
+def test_open_prefers_tcp_with_timeouts_and_falls_back(monkeypatch):
+    """RTSP over TCP first (UDP drops frames on Wi-Fi), timeouts passed at
+    open time, and FFmpeg's default transport if the camera refuses TCP."""
+    import os
+
+    from wyze_print_monitor import capture
+
+    attempts = []
+
+    class FakeCap:
+        def __init__(self, url, backend, params):
+            attempts.append((os.environ.get(capture.FFMPEG_OPTIONS_ENV), list(params)))
+            self._ok = len(attempts) == 2  # TCP refused, default works
+
+        def isOpened(self):
+            return self._ok
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(capture.cv2, "VideoCapture", FakeCap)
+    monkeypatch.delenv(capture.FFMPEG_OPTIONS_ENV, raising=False)
+    monkeypatch.setattr(capture, "_USER_FFMPEG_OPTIONS", None)
+    cap = capture.StreamReader("rtsps://cam/stream0")._open()
+
+    assert cap.isOpened()
+    assert [opts for opts, _ in attempts] == [capture.RTSP_OVER_TCP, None]
+    params = attempts[0][1]
+    assert params[params.index(capture.cv2.CAP_PROP_OPEN_TIMEOUT_MSEC) + 1] == capture.OPEN_TIMEOUT_MS
+    assert params[params.index(capture.cv2.CAP_PROP_READ_TIMEOUT_MSEC) + 1] == capture.READ_TIMEOUT_MS
+
+
+def test_transport_attempts_preserve_user_options():
+    from wyze_print_monitor.capture import RTSP_OVER_TCP, transport_attempts
+
+    assert transport_attempts(None) == [RTSP_OVER_TCP, None]
+    assert transport_attempts("stimeout;5000000") == [
+        f"stimeout;5000000|{RTSP_OVER_TCP}",
+        "stimeout;5000000",
+    ]
+    # A transport the user chose wins outright.
+    assert transport_attempts("rtsp_transport;udp") == ["rtsp_transport;udp"]
+
+
+def test_open_restores_user_options(monkeypatch):
+    import os
+
+    from wyze_print_monitor import capture
+
+    class FailingCap:
+        def __init__(self, *a):
+            pass
+
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(capture.cv2, "VideoCapture", FailingCap)
+    monkeypatch.setattr(capture, "_USER_FFMPEG_OPTIONS", "stimeout;5000000")
+    monkeypatch.setenv(capture.FFMPEG_OPTIONS_ENV, "stimeout;5000000")
+    capture.StreamReader("rtsp://cam/live")._open()
+    assert os.environ[capture.FFMPEG_OPTIONS_ENV] == "stimeout;5000000"
