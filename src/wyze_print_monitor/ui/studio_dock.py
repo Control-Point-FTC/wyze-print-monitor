@@ -47,6 +47,7 @@ from .. import studio_win32 as win
 TICK_MS = 200
 SEARCH_EVERY_S = 1.5   # how often to look for Studio while it isn't found
 RELOCATE_EVERY_S = 3.0  # re-find printer rows (Studio rebuilds them on refresh)
+HOLD_LAST_FRAME_S = 5.0  # keep the last picture through a reconnect this short
 
 # eufyMake Studio Device-tab palette, sampled from the running app.
 CARD = "#292a2d"
@@ -393,6 +394,7 @@ class StudioDock(QObject):
         self._row_tick = 0
         self._placed: dict[int, tuple] = {}
         self._status_until = 0.0
+        self._not_live_since: float | None = None
 
         main.status_message.connect(self._on_status)
         QApplication.instance().aboutToQuit.connect(self.detach)
@@ -608,7 +610,19 @@ class StudioDock(QObject):
 
         # --- picture placeholder while there's no live stream (live frames
         # are pushed straight into mon.video by MainWindow._on_frame)
-        if state != "live":
+        if state == "live":
+            self._not_live_since = None
+        elif self._not_live_since is None:
+            self._not_live_since = time.monotonic()
+        # A brief drop + reconnect shouldn't blank the picture: keep the last
+        # frame up (the header chip already says "Reconnecting…") and only
+        # fall back to the placeholder once the stream has really been gone.
+        holding = (
+            self._not_live_since is not None
+            and time.monotonic() - self._not_live_since < HOLD_LAST_FRAME_S
+            and not mon.video.pixmap().isNull()
+        )
+        if state != "live" and not holding:
             if not m.settings.rtsp_url:
                 placeholder = "No signal — set your RTSP URL in Settings."
             elif state in ("connecting", "reconnecting"):

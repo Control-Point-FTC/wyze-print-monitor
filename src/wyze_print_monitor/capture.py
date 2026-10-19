@@ -14,6 +14,12 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
+# Every blocking FFmpeg call is bounded so stop() can always join the thread.
+OPEN_TIMEOUT_MS = 5000
+READ_TIMEOUT_MS = 5000
+FFMPEG_OPTIONS_ENV = "OPENCV_FFMPEG_CAPTURE_OPTIONS"
+RTSP_OVER_TCP = "rtsp_transport;tcp"
+
 
 class StreamReader(QThread):
     """Reads an RTSP stream with OpenCV, emitting frames and state changes."""
@@ -49,13 +55,9 @@ class StreamReader(QThread):
         backoff = 1.0
         self.state_changed.emit("connecting", "Opening RTSP stream…")
         while not self._stop_requested:
-            cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+            cap = self._open()
             # Keep the decode buffer tiny so the view stays close to live.
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            # Bound blocking opens/reads so stop() can always join the thread.
-            # (Supported by the FFmpeg backend; harmless no-ops otherwise.)
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
             if not cap.isOpened():
                 cap.release()
                 self.state_changed.emit(
@@ -85,6 +87,36 @@ class StreamReader(QThread):
                 self.state_changed.emit("reconnecting", "Stream dropped, reconnecting…")
                 self._sleep(1.0)
         self.state_changed.emit("stopped", "Stream stopped.")
+
+    def _open(self) -> "cv2.VideoCapture":
+        """Open the stream, preferring RTSP over TCP.
+
+        FFmpeg defaults to RTP over UDP, which drops packets on Wi-Fi (and is
+        often blocked by firewalls): each loss ended the read loop and made
+        the picture blink while we reconnected. Interleaved TCP is far
+        steadier; fall back to FFmpeg's default for cameras that refuse it.
+
+        The timeouts must be passed at construction — VideoCapture(url)
+        opens immediately, so setting them afterwards never bounded the open
+        (it waited FFmpeg's 30 s default instead).
+        """
+        params = [
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, OPEN_TIMEOUT_MS,
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC, READ_TIMEOUT_MS,
+        ]
+        cap = None
+        for options in (RTSP_OVER_TCP, None):
+            # OpenCV's FFmpeg backend only takes demuxer options from this
+            # environment variable, read at open time.
+            if options:
+                os.environ[FFMPEG_OPTIONS_ENV] = options
+            else:
+                os.environ.pop(FFMPEG_OPTIONS_ENV, None)
+            cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG, params)
+            if cap.isOpened() or self._stop_requested:
+                return cap
+            cap.release()
+        return cap
 
     def _sleep(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
