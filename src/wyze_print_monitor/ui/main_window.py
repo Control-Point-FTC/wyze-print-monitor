@@ -482,6 +482,9 @@ class MainWindow(QMainWindow):
         self._set_pill(state)
         self.session_stream.setText(labels.get(state, state))
         self._update_stat_cards()
+        # Frames stop arriving on disconnect/error, so refresh the session
+        # panel here too — otherwise it keeps showing a stale active state.
+        self._update_session_panel()
         self.statusBar().showMessage(detail, 5000)
 
     def _update_stat_cards(self) -> None:
@@ -587,6 +590,7 @@ class MainWindow(QMainWindow):
             self._recorder = ClipRecorder(path, fps=fps or 20.0)
             self._rec_start = time.monotonic()
             self.record_btn.setText("Stop recording")
+            self._update_session_panel()
             self.statusBar().showMessage("Recording…", 3000)
         else:
             if self._recorder is not None:
@@ -599,6 +603,7 @@ class MainWindow(QMainWindow):
                     f"Saved clip ({count} frames): {path}", 8000
                 )
             self.record_btn.setText("Record")
+            self._update_session_panel()
 
     def _on_timelapse_toggled(self, checked: bool) -> None:
         if checked:
@@ -613,6 +618,7 @@ class MainWindow(QMainWindow):
             self._timelapse.start()
             self._timelapse_write_warned = False
             self.timelapse_btn.setText("Stop timelapse")
+            self._update_session_panel()
             self.statusBar().showMessage(
                 f"Timelapse capturing every {self.settings.timelapse_interval_sec}s…",
                 4000,
@@ -621,6 +627,7 @@ class MainWindow(QMainWindow):
             collector = self._timelapse
             self._timelapse = None
             self.timelapse_btn.setText("Timelapse")
+            self._update_session_panel()
             if collector is None or collector.saved == 0:
                 self.statusBar().showMessage("Timelapse stopped, no frames captured.", 5000)
                 return
