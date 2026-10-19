@@ -184,8 +184,14 @@ class SettingsDialog(QDialog):
     def _on_test(self) -> None:
         email = self.email_edit.text().strip()
         password = self.password_edit.text() or get_secret(SECRET_PASSWORD) or ""
-        key_id = clean_api_credential(self.key_id_edit.text() or get_secret(SECRET_KEY_ID))
-        api_key = clean_api_credential(self.api_key_edit.text() or get_secret(SECRET_API_KEY))
+        # Clean before falling back: a field holding only stray whitespace
+        # counts as empty, so the saved key is used instead.
+        key_id = clean_api_credential(self.key_id_edit.text()) or clean_api_credential(
+            get_secret(SECRET_KEY_ID)
+        )
+        api_key = clean_api_credential(self.api_key_edit.text()) or clean_api_credential(
+            get_secret(SECRET_API_KEY)
+        )
         if not (email and password and key_id and api_key):
             QMessageBox.warning(
                 self,
