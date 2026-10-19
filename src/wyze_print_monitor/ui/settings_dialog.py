@@ -1,6 +1,8 @@
 """Settings dialog: RTSP URL, Wyze credentials, camera picker, folders."""
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -137,6 +139,24 @@ class SettingsDialog(QDialog):
             self.autostart_check.setToolTip("Not supported on this platform")
         form.addRow(self.autostart_check)
 
+        self.dock_check = QCheckBox("Show inside eufyMake Studio's Device tab")
+        self.dock_check.setChecked(settings.dock_in_studio)
+        self.dock_row_spin = QSpinBox()
+        self.dock_row_spin.setRange(0, 20)
+        self.dock_row_spin.setSpecialValueText("Any printer")
+        self.dock_row_spin.setPrefix("Row ")
+        self.dock_row_spin.setValue(settings.dock_printer_row)
+        self.dock_row_spin.setToolTip(
+            "Which row of Studio's \"My Printer\" list has this camera. The live "
+            "view only replaces Studio's Monitor while that printer is selected."
+        )
+        if sys.platform != "win32":
+            self.dock_check.setEnabled(False)
+            self.dock_row_spin.setEnabled(False)
+            self.dock_check.setToolTip("Windows only")
+        form.addRow(self.dock_check)
+        form.addRow("Printer with camera", self.dock_row_spin)
+
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -219,7 +239,9 @@ class SettingsDialog(QDialog):
         s.snapshot_dir = self.snapshot_edit.text().strip()
         s.video_dir = self.video_edit.text().strip()
         s.always_on_top = self.on_top_check.isChecked()
-        mac = self.camera_combo.currentData()
+        s.dock_in_studio = self.dock_check.isChecked()
+        s.dock_printer_row = self.dock_row_spin.value()
+        mac =self.camera_combo.currentData()
         if mac:
             s.camera_mac = mac
             s.camera_nickname = self.camera_combo.currentText()

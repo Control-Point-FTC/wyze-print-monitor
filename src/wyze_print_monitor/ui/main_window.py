@@ -11,6 +11,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QFormLayout,
@@ -70,8 +71,20 @@ class TimelapseCompileWorker(QThread):
 
 
 class MainWindow(QMainWindow):
+    # Every status-bar message, re-broadcast for views outside this window
+    # (the panels docked inside eufyMake Studio).
+    status_message = Signal(str, int)
+
     def __init__(self) -> None:
         super().__init__()
+        # Extra QLabels (e.g. the Studio-docked Monitor) that also show frames.
+        self.extra_video_labels: list[QLabel] = []
+        # While docked into Studio, closing this window only hides it; the app
+        # keeps running until File → Exit (or the tray's Exit).
+        self.hide_on_close = False
+        self._quitting = False
+        self._shut_down = False
+        self._fullscreen_from_hidden = False
         self.setWindowTitle("Wyze Print Monitor")
         self.resize(1180, 720)
 
@@ -124,7 +137,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(main)
-        self.statusBar().showMessage("Ready")
+        self._status("Ready")
         self._set_controls_enabled(False)
 
     def _build_sidebar(self) -> QWidget:
@@ -320,7 +333,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(vids_action)
         file_menu.addSeparator()
         exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(self.quit_app)
         file_menu.addAction(exit_action)
 
         view_menu = self.menuBar().addMenu("View")
@@ -497,7 +510,7 @@ class MainWindow(QMainWindow):
         # Frames stop arriving on disconnect/error, so refresh the session
         # panel here too — otherwise it keeps showing a stale active state.
         self._update_session_panel()
-        self.statusBar().showMessage(detail, 5000)
+        self._status(detail, 5000)
 
     def _update_stat_cards(self) -> None:
         state_labels = {
@@ -561,23 +574,26 @@ class MainWindow(QMainWindow):
             collector.maybe_capture(frame)
             if collector.write_errors and not self._timelapse_write_warned:
                 self._timelapse_write_warned = True
-                self.statusBar().showMessage(
+                self._status(
                     "Timelapse: couldn't save a frame — check disk space.", 8000
                 )
 
-        label_w = self.video_label.width()
-        label_h = self.video_label.height()
-        if label_w < 2 or label_h < 2:
+        # Convert once, then scale into every visible view (this window and
+        # the Studio-docked Monitor). Hidden views skip the work entirely.
+        targets = [
+            label
+            for label in (self.video_label, *self.extra_video_labels)
+            if label.isVisible() and label.width() >= 2 and label.height() >= 2
+        ]
+        if not targets:
             return
         h, w = frame.shape[:2]
-        scale = min(label_w / w, label_h / h)
-        new_w, new_h = int(w * scale), int(h * scale)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-        pixmap = QPixmap.fromImage(image).scaled(
-            new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        self.video_label.setPixmap(pixmap)
+        pixmap = QPixmap.fromImage(QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy())
+        for label in targets:
+            label.setPixmap(
+                pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
 
     # ------------------------------------------------------------------ capture actions
     def _on_snapshot(self) -> None:
@@ -586,7 +602,7 @@ class MainWindow(QMainWindow):
             return
         path = snapshot_path(self.settings.resolved_snapshot_dir())
         if cv2.imwrite(path, self._last_frame):
-            self.statusBar().showMessage(f"Snapshot saved: {path}", 5000)
+            self._status(f"Snapshot saved: {path}", 5000)
         else:
             QMessageBox.warning(self, "Snapshot", f"Couldn't save snapshot to:\n{path}")
 
@@ -603,7 +619,7 @@ class MainWindow(QMainWindow):
             self._rec_start = time.monotonic()
             self.record_btn.setText("Stop recording")
             self._update_session_panel()
-            self.statusBar().showMessage("Recording…", 3000)
+            self._status("Recording…", 3000)
         else:
             if self._recorder is not None:
                 path = self._recorder.output_path
@@ -611,7 +627,7 @@ class MainWindow(QMainWindow):
                 self._recorder.close()
                 self._recorder = None
                 self._rec_start = None
-                self.statusBar().showMessage(
+                self._status(
                     f"Saved clip ({count} frames): {path}", 8000
                 )
             self.record_btn.setText("Record")
@@ -631,7 +647,7 @@ class MainWindow(QMainWindow):
             self._timelapse_write_warned = False
             self.timelapse_btn.setText("Stop timelapse")
             self._update_session_panel()
-            self.statusBar().showMessage(
+            self._status(
                 f"Timelapse capturing every {self.settings.timelapse_interval_sec}s…",
                 4000,
             )
@@ -641,7 +657,7 @@ class MainWindow(QMainWindow):
             self.timelapse_btn.setText("Timelapse")
             self._update_session_panel()
             if collector is None or collector.saved == 0:
-                self.statusBar().showMessage("Timelapse stopped, no frames captured.", 5000)
+                self._status("Timelapse stopped, no frames captured.", 5000)
                 return
             output = os.path.join(
                 self.settings.resolved_video_dir(),
@@ -650,7 +666,7 @@ class MainWindow(QMainWindow):
             # Compile off the GUI thread: a long print leaves thousands of
             # frames to encode, which would freeze the live view.
             self.timelapse_btn.setEnabled(False)
-            self.statusBar().showMessage("Compiling timelapse…", 3000)
+            self._status("Compiling timelapse…", 3000)
             self._compile_worker = TimelapseCompileWorker(collector.frames_dir, output, self)
             self._compile_worker.done.connect(self._on_timelapse_compiled)
             self._compile_worker.failed.connect(self._on_timelapse_failed)
@@ -658,7 +674,7 @@ class MainWindow(QMainWindow):
 
     def _on_timelapse_compiled(self, path: str, count: int) -> None:
         self.timelapse_btn.setEnabled(True)
-        self.statusBar().showMessage(f"Timelapse saved ({count} frames): {path}", 8000)
+        self._status(f"Timelapse saved ({count} frames): {path}", 8000)
         self._finish_compile()
 
     def _on_timelapse_failed(self, error: str) -> None:
@@ -672,14 +688,48 @@ class MainWindow(QMainWindow):
         if worker is not None:
             worker.wait()  # run() has emitted its last signal; join is instant
         if self._close_pending:
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self.quit_app)
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
             self.showNormal()
+            if self._fullscreen_from_hidden:
+                # Opened from the Studio dock: go back to living in Studio.
+                self._fullscreen_from_hidden = False
+                self.hide()
         else:
+            self._fullscreen_from_hidden = not self.isVisible()
             self.showFullScreen()
+            self.raise_()
+            self.activateWindow()
         self.fullscreen_action.setChecked(self.isFullScreen())
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.key() == Qt.Key_Escape and self.isFullScreen():
+            self._toggle_fullscreen()
+            return
+        super().keyPressEvent(event)
+
+    def show_window(self) -> None:
+        """Bring the full window up (from the Studio dock or the tray)."""
+        if self.isMinimized() or not self.isVisible():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def quit_app(self) -> None:
+        """Exit the whole app (File → Exit, tray Exit). Works whether or not
+        this window is shown — while docked it usually isn't."""
+        self._quitting = True
+        if self._defer_for_compile():
+            return
+        self._shutdown()
+        self.hide()
+        QApplication.exit(0)
+
+    def _status(self, message: str, timeout: int = 0) -> None:
+        self.statusBar().showMessage(message, timeout)
+        self.status_message.emit(message, timeout)
 
     # ------------------------------------------------------------------ wyze
     def _auto_connect(self) -> None:
@@ -755,6 +805,12 @@ class MainWindow(QMainWindow):
                     item.setData(Qt.UserRole, cam.mac)
                     self.camera_list.addItem(item)
                 self._select_sidebar_camera_from_settings()
+                if self.camera_list.currentRow() < 0 and self.camera_list.count() == 1:
+                    # Nothing saved (first login) and only one camera: it's
+                    # the one. Otherwise every control would stay disabled
+                    # until the user clicks it — and the Studio dock hides
+                    # the picker when there's a single camera.
+                    self.camera_list.setCurrentRow(0)
             finally:
                 self.camera_list.blockSignals(False)
             self._update_connection_ui()
@@ -808,7 +864,7 @@ class MainWindow(QMainWindow):
             if selected is None or selected.mac != mac:
                 return  # the user moved on to another camera meanwhile
             if not ok:
-                self.statusBar().showMessage(f"Could not read camera state: {error}", 6000)
+                self._status(f"Could not read camera state: {error}", 6000)
                 state = None
             self._apply_toggle_states(state)
 
@@ -851,13 +907,13 @@ class MainWindow(QMainWindow):
                 self, label, "Connect to Wyze and select a camera first."
             )
             return
-        self.statusBar().showMessage(f"{label}…")
+        self._status(f"{label}…")
 
         def done(ok: bool, _result, error: str) -> None:
             if ok:
-                self.statusBar().showMessage(f"{label}: done", 4000)
+                self._status(f"{label}: done", 4000)
             else:
-                self.statusBar().showMessage(f"{label}: failed", 4000)
+                self._status(f"{label}: failed", 4000)
                 QMessageBox.warning(self, label, error)
 
         fn(mac, *args, done)
@@ -950,7 +1006,7 @@ class MainWindow(QMainWindow):
         )
         if answer == QMessageBox.Yes:
             forget_secrets()
-            self.statusBar().showMessage("Wyze credentials removed from keyring.", 5000)
+            self._status("Wyze credentials removed from keyring.", 5000)
 
     def _apply_always_on_top(self) -> None:
         # Capture visibility BEFORE changing flags: setWindowFlag can hide the
@@ -968,14 +1024,41 @@ class MainWindow(QMainWindow):
         self._apply_always_on_top()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
-        if self._compile_worker is not None and self._compile_worker.isRunning():
-            # The window owns the QThread: never tear down a running encoder.
-            # Defer the close; _on_timelapse_compiled/_failed re-issue it once
-            # the MP4 is finished, however long that takes.
-            self._close_pending = True
-            self.statusBar().showMessage("Finishing timelapse compile — the app will close when it's done…")
+        if self.hide_on_close and not self._quitting:
+            # Docked in Studio: the stream, recordings and controls live on
+            # there, so closing the window just tucks it away.
+            if self.isFullScreen():
+                self.showNormal()
+            self._fullscreen_from_hidden = False
+            self.hide()
             event.ignore()
             return
+        if self._defer_for_compile():
+            event.ignore()
+            return
+        self._shutdown()
+        super().closeEvent(event)
+        # quitOnLastWindowClosed is off while docking (the docked panels and
+        # tray keep the app alive), so end the event loop explicitly. exit()
+        # rather than quit(): quit() first asks every top-level window to
+        # close, and the windows embedded in Studio veto that.
+        QApplication.exit(0)
+
+    def _defer_for_compile(self) -> bool:
+        if self._compile_worker is not None and self._compile_worker.isRunning():
+            # The window owns the QThread: never tear down a running encoder.
+            # Defer the exit; _finish_compile re-issues it once the MP4 is
+            # finished, however long that takes.
+            self._close_pending = True
+            self._status("Finishing timelapse compile — the app will close when it's done…")
+            return True
+        return False
+
+    def _shutdown(self) -> None:
+        """Release the camera, threads and settings. Safe to call twice."""
+        if self._shut_down:
+            return
+        self._shut_down = True
         if self._recorder is not None:
             self._recorder.close()
         self._stop_stream()
@@ -988,4 +1071,3 @@ class MainWindow(QMainWindow):
         self._retired_readers.clear()
         self.runner.stop()
         save_settings(self.settings)
-        super().closeEvent(event)
