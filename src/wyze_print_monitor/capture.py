@@ -127,6 +127,6 @@ class ClipRecorder:
 
 
 def snapshot_path(snapshot_dir: str, prefix: str = "snapshot") -> str:
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     os.makedirs(snapshot_dir, exist_ok=True)
     return os.path.join(snapshot_dir, f"{prefix}_{stamp}.png")

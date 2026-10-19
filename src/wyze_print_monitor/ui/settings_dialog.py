@@ -240,5 +240,5 @@ class SettingsDialog(QDialog):
 
 
 def forget_secrets() -> None:
-    for name in (SECRET_PASSWORD, SECRET_KEY_ID, SECRET_API_KEY, SECRET_RTSP_URL):
+    for name in (SECRET_PASSWORD, SECRET_KEY_ID, SECRET_API_KEY):
         delete_secret(name)

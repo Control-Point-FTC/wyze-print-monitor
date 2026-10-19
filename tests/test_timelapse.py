@@ -56,3 +56,19 @@ def test_collector_creates_dir_on_start(tmp_path):
     frames_dir = str(tmp_path / "new-dir")
     TimelapseCollector(frames_dir).start()
     assert os.path.isdir(frames_dir)
+
+
+def test_collector_write_failure_not_counted(tmp_path, monkeypatch):
+    """A failed cv2.imwrite must not count as a saved frame: the next
+    success reuses the slot so the video has no silent gaps."""
+    collector = TimelapseCollector(str(tmp_path), interval_sec=10)
+    collector.start()
+    monkeypatch.setattr(cv2, "imwrite", lambda *a, **k: False)
+    assert collector.maybe_capture(_frame(), now=1000.0) is False
+    assert collector.saved == 0
+    assert collector.write_errors == 1
+    # Next success reuses frame_000000.jpg (no gap in numbering).
+    monkeypatch.setattr(cv2, "imwrite", lambda *a, **k: True)
+    assert collector.maybe_capture(_frame(), now=1010.0) is True
+    assert collector.saved == 1
+    assert collector.write_errors == 1

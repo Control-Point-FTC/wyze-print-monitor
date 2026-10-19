@@ -21,11 +21,13 @@ class TimelapseCollector:
         self.interval_sec = max(1, interval_sec)
         self._next_due = 0.0
         self.saved = 0
+        self.write_errors = 0
 
     def start(self) -> None:
         os.makedirs(self.frames_dir, exist_ok=True)
         self._next_due = 0.0  # capture the first frame immediately
         self.saved = 0
+        self.write_errors = 0
 
     def maybe_capture(self, frame: np.ndarray, now: float | None = None) -> bool:
         """Save *frame* if the interval has elapsed. Returns True when saved."""
@@ -34,7 +36,11 @@ class TimelapseCollector:
             return False
         self._next_due = now + self.interval_sec
         path = os.path.join(self.frames_dir, f"frame_{self.saved:06d}.jpg")
-        cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if not cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 90]):
+            # Don't count failed writes: the next success reuses this slot,
+            # so the compiled video has no silent gaps.
+            self.write_errors += 1
+            return False
         self.saved += 1
         return True
 

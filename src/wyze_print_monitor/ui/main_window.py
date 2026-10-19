@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self._reader: StreamReader | None = None
         self._recorder: ClipRecorder | None = None
         self._timelapse: TimelapseCollector | None = None
+        self._timelapse_write_warned = False
         self._timelapse_frames_dir = ""
         self._compile_worker: TimelapseCompileWorker | None = None
         self._cameras: list[CameraInfo] = []
@@ -267,9 +268,9 @@ class MainWindow(QMainWindow):
         box = QGroupBox("Detection")
         layout = QVBoxLayout(box)
         self.motion_check = QCheckBox("Motion detection")
-        self.motion_check.stateChanged.connect(self._on_motion_changed)
+        self.motion_check.toggled.connect(self._on_motion_changed)
         self.notify_check = QCheckBox("Push notifications")
-        self.notify_check.stateChanged.connect(self._on_notify_changed)
+        self.notify_check.toggled.connect(self._on_notify_changed)
         layout.addWidget(self.motion_check)
         layout.addWidget(self.notify_check)
         return box
@@ -366,7 +367,13 @@ class MainWindow(QMainWindow):
                 self.record_btn.setText("Record")
                 QMessageBox.warning(self, "Recording failed", str(exc))
         if self._timelapse is not None:
-            self._timelapse.maybe_capture(frame)
+            collector = self._timelapse
+            collector.maybe_capture(frame)
+            if collector.write_errors and not self._timelapse_write_warned:
+                self._timelapse_write_warned = True
+                self.statusBar().showMessage(
+                    "Timelapse: couldn't save a frame — check disk space.", 8000
+                )
 
         label_w = self.video_label.width()
         label_h = self.video_label.height()
@@ -388,12 +395,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Snapshot", "No video frame available yet.")
             return
         path = snapshot_path(self.settings.resolved_snapshot_dir())
-        cv2.imwrite(path, self._last_frame)
-        self.statusBar().showMessage(f"Snapshot saved: {path}", 5000)
+        if cv2.imwrite(path, self._last_frame):
+            self.statusBar().showMessage(f"Snapshot saved: {path}", 5000)
+        else:
+            QMessageBox.warning(self, "Snapshot", f"Couldn't save snapshot to:\n{path}")
 
     def _on_record_toggled(self, checked: bool) -> None:
         if checked:
-            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             path = os.path.join(
                 self.settings.resolved_video_dir(), f"clip_{stamp}.mp4"
             )
@@ -425,6 +434,7 @@ class MainWindow(QMainWindow):
                 interval_sec=self.settings.timelapse_interval_sec,
             )
             self._timelapse.start()
+            self._timelapse_write_warned = False
             self.timelapse_btn.setText("Stop timelapse")
             self.statusBar().showMessage(
                 f"Timelapse capturing every {self.settings.timelapse_interval_sec}s…",
@@ -439,7 +449,7 @@ class MainWindow(QMainWindow):
                 return
             output = os.path.join(
                 self.settings.resolved_video_dir(),
-                f"timelapse_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.mp4",
+                f"timelapse_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.mp4",
             )
             # Compile off the GUI thread: a long print leaves thousands of
             # frames to encode, which would freeze the live view.
@@ -646,16 +656,14 @@ class MainWindow(QMainWindow):
             return
         self.controller.set_spotlight(mac, checked, done)
 
-    def _on_motion_changed(self, state: int) -> None:
-        on = state == Qt.Checked
+    def _on_motion_changed(self, on: bool) -> None:
         self._cam_action(
             "Motion detection " + ("on" if on else "off"),
             self.controller.set_motion_detection,
             on,
         )
 
-    def _on_notify_changed(self, state: int) -> None:
-        on = state == Qt.Checked
+    def _on_notify_changed(self, on: bool) -> None:
         self._cam_action(
             "Notifications " + ("on" if on else "off"),
             self.controller.set_notifications,
@@ -671,6 +679,10 @@ class MainWindow(QMainWindow):
             self.on_top_action.setChecked(self.settings.always_on_top)
             if effective_rtsp_url(self.settings):
                 self._start_stream()
+            else:
+                # URL was cleared: stop the old camera instead of letting it
+                # keep streaming (and recording) with the stale URL.
+                self._stop_stream()
             # The dialog may have completed a fresh login, in which case the
             # main window's camera list is still empty — repopulate it so the
             # controls don't stay disabled after setup.
@@ -712,6 +724,10 @@ class MainWindow(QMainWindow):
         self._apply_always_on_top()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._compile_worker is not None and self._compile_worker.isRunning():
+            # The window owns the QThread: never tear down a running encoder.
+            self.statusBar().showMessage("Finishing timelapse compile before exit…")
+            self._compile_worker.wait(60000)
         if self._recorder is not None:
             self._recorder.close()
         self._stop_stream()
