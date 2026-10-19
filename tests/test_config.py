@@ -108,4 +108,4 @@ def test_secrets_fail_soft_without_keyring_backend(monkeypatch):
     monkeypatch.setitem(sys.modules, "keyring.errors", fake_errors)
 
     assert config.get_secret("anything") is None
-    config.save_secret("anything", "value")  # must not raise
+    assert config.save_secret("anything", "value") is False  # reports failure

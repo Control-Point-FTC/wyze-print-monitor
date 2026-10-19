@@ -1,4 +1,5 @@
 """Tests for autostart helpers (no registry/filesystem side effects)."""
+import os
 import sys
 
 import pytest
@@ -37,3 +38,19 @@ def test_unsupported_platform_raises():
         autostart.is_enabled()
     with pytest.raises(NotImplementedError):
         autostart.set_enabled(True)
+
+
+def test_linux_desktop_path_honors_xdg_config_home(tmp_path, monkeypatch):
+    """With XDG_CONFIG_HOME set, the autostart entry must go there — that is
+    where the desktop session looks, not ~/.config."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = autostart._linux_desktop_path()
+    assert path == str(tmp_path / "autostart" / "wyze-print-monitor.desktop")
+
+
+def test_linux_desktop_path_falls_back_to_home_config(monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    path = autostart._linux_desktop_path()
+    assert path.endswith(
+        os.path.join(".config", "autostart", "wyze-print-monitor.desktop")
+    )

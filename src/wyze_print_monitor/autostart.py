@@ -53,10 +53,11 @@ def set_enabled(enabled: bool) -> None:
 
 
 # ------------------------------------------------------------------ Windows
-def _windows_run_key(access: int):
+def _windows_run_key(access: int, create: bool = False):
     import winreg
 
-    return winreg.OpenKey(
+    opener = winreg.CreateKeyEx if create else winreg.OpenKey
+    return opener(
         winreg.HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
         0,
@@ -78,7 +79,9 @@ def _windows_is_enabled() -> bool:
 def _windows_enable() -> None:
     import winreg
 
-    with _windows_run_key(winreg.KEY_SET_VALUE) as key:
+    # CreateKeyEx (not OpenKey): the per-user Run key may not exist yet on a
+    # fresh profile, and enable must work there too.
+    with _windows_run_key(winreg.KEY_SET_VALUE, create=True) as key:
         winreg.SetValueEx(key, RUN_VALUE_NAME, 0, winreg.REG_SZ, launch_command())
 
 
@@ -94,9 +97,12 @@ def _windows_disable() -> None:
 
 # ------------------------------------------------------------------ Linux
 def _linux_desktop_path() -> str:
-    return os.path.join(
-        os.path.expanduser("~"), ".config", "autostart", "wyze-print-monitor.desktop"
+    # Honor XDG_CONFIG_HOME: the desktop session reads autostart entries from
+    # there when it is set, not from ~/.config.
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
     )
+    return os.path.join(config_home, "autostart", "wyze-print-monitor.desktop")
 
 
 def build_desktop_entry(exec_cmd: str) -> str:

@@ -124,14 +124,16 @@ def _keyring_exc():
     return (keyring.errors.NoKeyringError, keyring.errors.InitError)
 
 
-def save_secret(name: str, value: str) -> None:
-    """Best-effort: silently skip on machines with no keyring backend."""
+def save_secret(name: str, value: str) -> bool:
+    """Best-effort: returns False on machines with no keyring backend, so
+    callers can warn instead of silently losing the secret on restart."""
     import keyring
 
     try:
         keyring.set_password(KEYRING_SERVICE, name, value)
     except _keyring_exc():
-        pass
+        return False
+    return True
 
 
 def get_secret(name: str) -> str | None:

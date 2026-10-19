@@ -207,8 +207,11 @@ class SettingsDialog(QDialog):
         s = self._settings
         rtsp_url = self.rtsp_edit.text().strip()
         s.rtsp_url = rtsp_url  # save_settings() redacts credentials on write
+        secrets_ok = True
         if rtsp_url:
-            save_secret(SECRET_RTSP_URL, rtsp_url)
+            # Evaluate the call first: every secret must be attempted even if
+            # an earlier one failed.
+            secrets_ok = save_secret(SECRET_RTSP_URL, rtsp_url) and secrets_ok
         else:
             delete_secret(SECRET_RTSP_URL)
         s.wyze_email = self.email_edit.text().strip()
@@ -222,11 +225,19 @@ class SettingsDialog(QDialog):
             s.camera_nickname = self.camera_combo.currentText()
         # Only overwrite secrets the user actually typed.
         if self.password_edit.text():
-            save_secret(SECRET_PASSWORD, self.password_edit.text())
+            secrets_ok = save_secret(SECRET_PASSWORD, self.password_edit.text()) and secrets_ok
         if self.key_id_edit.text().strip():
-            save_secret(SECRET_KEY_ID, self.key_id_edit.text().strip())
+            secrets_ok = save_secret(SECRET_KEY_ID, self.key_id_edit.text().strip()) and secrets_ok
         if self.api_key_edit.text():
-            save_secret(SECRET_API_KEY, self.api_key_edit.text())
+            secrets_ok = save_secret(SECRET_API_KEY, self.api_key_edit.text()) and secrets_ok
+        if not secrets_ok:
+            QMessageBox.warning(
+                self,
+                "Secrets not saved",
+                "No OS keyring is available, so the passwords and API keys "
+                "were NOT saved and will not survive a restart. "
+                "Everything still works for this session.",
+            )
         if autostart.supported() and self.autostart_check.isEnabled():
             try:
                 autostart.set_enabled(self.autostart_check.isChecked())
