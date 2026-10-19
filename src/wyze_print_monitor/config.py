@@ -79,6 +79,11 @@ class Settings:
     snapshot_dir: str = ""
     video_dir: str = ""
     always_on_top: bool = True
+    # Embed the live view + camera controls inside eufyMake Studio's Device tab
+    # (Windows only). dock_printer_row is the 1-based row in Studio's
+    # "My Printer" list that has this camera; 0 = show for any printer.
+    dock_in_studio: bool = True
+    dock_printer_row: int = 1
 
     def resolved_snapshot_dir(self) -> str:
         if self.snapshot_dir:

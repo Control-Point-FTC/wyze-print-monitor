@@ -7,9 +7,38 @@ recording, and print timelapses.
 
 Built because slicer monitor tabs (e.g. eufyMake Studio's Device → Monitor)
 only show a printer's *built-in* camera and offer no way to plug in an
-external camera. This app sits next to the slicer instead.
+external camera. On Windows the app plugs itself **into eufyMake Studio's
+Device tab**; anywhere else it runs as its own window next to the slicer.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![Qt](https://img.shields.io/badge/Qt-PySide6-green) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+## Inside eufyMake Studio (Windows)
+
+![Wyze feed docked in eufyMake Studio](docs/screenshots/studio-dock.png)
+
+With eufyMake Studio (or AnkerMake Studio) open, the app embeds two panels
+straight into Studio's **Device** tab:
+
+- **Monitor** — Studio's "does not support real-time video" box becomes the
+  live Wyze feed, with LIVE / resolution / recording / timelapse chips and a
+  toolbar: snapshot, record, timelapse, open folders, fullscreen, full
+  window, settings.
+- **Wyze Cam** — Studio's empty "Others" card becomes the camera controls:
+  connect, power on/off, restart, siren, spotlight, motion detection, push
+  notifications and device info.
+
+Studio's own Control (temperatures, extrude/retract, Z-offset), Progress /
+Start Printing and printer list are untouched. The panels are real child
+windows of Studio, so they move, resize and minimize with it and disappear
+on the Slice tab. They only appear while the printer with the camera is
+selected in **My Printer** — set which row that is under Settings →
+*Printer with camera* (default: the first printer; "Any printer" to always
+show). Turn embedding off with *Show inside eufyMake Studio's Device tab*.
+
+While docked, the full window is hidden; open it from the toolbar's window
+button or the tray icon (closing it just hides it again — use File → Exit or
+the tray's Exit to quit). Studio's UI must be in English (panels are found
+by their "Monitor" / "Others" / "My Printer" labels).
 
 ## Features
 
