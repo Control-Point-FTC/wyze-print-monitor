@@ -40,6 +40,7 @@ from ..config import (
     SECRET_KEY_ID,
     SECRET_PASSWORD,
     Settings,
+    clean_api_credential,
     effective_rtsp_url,
     get_secret,
     load_settings,
@@ -740,8 +741,9 @@ class MainWindow(QMainWindow):
     def _on_connect(self, silent: bool = False) -> None:
         email = self.settings.wyze_email or ""
         password = get_secret(SECRET_PASSWORD) or ""
-        key_id = get_secret(SECRET_KEY_ID) or ""
-        api_key = get_secret(SECRET_API_KEY) or ""
+        # Keys saved by older versions may still carry a pasted newline.
+        key_id = clean_api_credential(get_secret(SECRET_KEY_ID))
+        api_key = clean_api_credential(get_secret(SECRET_API_KEY))
         if not (email and password and key_id and api_key):
             if not silent:
                 QMessageBox.information(
