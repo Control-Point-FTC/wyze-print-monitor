@@ -1,0 +1,200 @@
+"""Camera control through the Wyze cloud API (via ``wyzeapy``).
+
+Works with stock Wyze firmware, including the RTSP firmware on the Cam v3:
+the camera stays fully usable in the Wyze app while this module sends it
+commands. All coroutines run on the :class:`AsyncRunner` event loop; public
+methods are non-blocking and report back through ``on_done`` callbacks on
+the GUI thread.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from wyzeapy import Wyzeapy
+from wyzeapy.exceptions import TwoFactorAuthenticationEnabled
+from wyzeapy.services.camera_service import CameraService
+
+from .async_runner import AsyncRunner, OnDone
+
+
+class NeedTwoFactor(Exception):
+    """Raised (as an on_done error) when Wyze asks for a 2FA verification code."""
+
+
+@dataclass
+class CameraInfo:
+    mac: str
+    nickname: str
+    product_model: str
+    is_online: bool
+    firmware: str = ""
+    ip: str = ""
+
+
+def _camera_info(camera: Any) -> CameraInfo:
+    raw = getattr(camera, "raw_dict", {}) or {}
+    params = getattr(camera, "device_params", {}) or {}
+    return CameraInfo(
+        mac=str(getattr(camera, "mac", "")),
+        nickname=str(getattr(camera, "nickname", "") or "Camera"),
+        product_model=str(getattr(camera, "product_model", "")),
+        is_online=bool(getattr(camera, "available", True)),
+        firmware=str(
+            getattr(camera, "firmware_ver", "")
+            or params.get("firmware_ver", "")
+            or raw.get("firmware_ver", "")
+        ),
+        ip=str(params.get("ip", "") or raw.get("ip", "")),
+    )
+
+
+class WyzeController:
+    """Non-blocking facade over wyzeapy's async CameraService."""
+
+    def __init__(self, runner: AsyncRunner) -> None:
+        self._runner = runner
+        self._client: Optional[Wyzeapy] = None
+        self._pending_client: Optional[Wyzeapy] = None
+        self._cameras: dict[str, Any] = {}
+
+    # ------------------------------------------------------------------ login
+    async def _do_login(
+        self, email: str, password: str, key_id: str, api_key: str
+    ) -> bool:
+        client = Wyzeapy()
+        try:
+            await client.login(email, password, key_id, api_key)
+        except TwoFactorAuthenticationEnabled:
+            self._pending_client = client
+            raise NeedTwoFactor(
+                "Wyze requires a 2FA verification code for this login."
+            )
+        self._client = client
+        self._pending_client = None
+        return True
+
+    def login(
+        self,
+        email: str,
+        password: str,
+        key_id: str,
+        api_key: str,
+        on_done: OnDone,
+    ) -> None:
+        self._runner.submit(
+            "login", self._do_login(email, password, key_id, api_key), on_done
+        )
+
+    async def _do_login_2fa(self, code: str) -> bool:
+        client = self._pending_client
+        if client is None:
+            raise RuntimeError("No pending login waiting for a 2FA code.")
+        await client.login_with_2fa(code)
+        self._client = client
+        self._pending_client = None
+        return True
+
+    def submit_2fa(self, code: str, on_done: OnDone) -> None:
+        self._runner.submit("login-2fa", self._do_login_2fa(code), on_done)
+
+    @property
+    def logged_in(self) -> bool:
+        return self._client is not None
+
+    # ----------------------------------------------------------------- cameras
+    async def _service(self) -> CameraService:
+        if self._client is None:
+            raise RuntimeError("Not logged in to Wyze.")
+        return await self._client.camera_service
+
+    async def _do_list_cameras(self) -> list[CameraInfo]:
+        service = await self._service()
+        cameras = await service.get_cameras()
+        self._cameras = {str(c.mac): c for c in cameras}
+        return [_camera_info(c) for c in cameras]
+
+    def list_cameras(self, on_done: OnDone) -> None:
+        self._runner.submit("list-cameras", self._do_list_cameras(), on_done)
+
+    def _get_camera(self, mac: str) -> Any:
+        camera = self._cameras.get(mac)
+        if camera is None:
+            raise ValueError("Camera not found — refresh the camera list first.")
+        return camera
+
+    # ----------------------------------------------------------------- actions
+    async def _do_set_power(self, mac: str, on: bool) -> bool:
+        service = await self._service()
+        camera = self._get_camera(mac)
+        if on:
+            await service.turn_on(camera)
+        else:
+            await service.turn_off(camera)
+        return True
+
+    def set_power(self, mac: str, on: bool, on_done: OnDone) -> None:
+        self._runner.submit("power", self._do_set_power(mac, on), on_done)
+
+    async def _do_restart(self, mac: str) -> bool:
+        # Same run_action mechanism the official integrations use for restart.
+        service = await self._service()
+        camera = self._get_camera(mac)
+        await service._run_action(camera, "restart")  # noqa: SLF001 - no public API
+        return True
+
+    def restart(self, mac: str, on_done: OnDone) -> None:
+        self._runner.submit("restart", self._do_restart(mac), on_done)
+
+    async def _do_siren(self, mac: str, on: bool) -> bool:
+        service = await self._service()
+        camera = self._get_camera(mac)
+        if on:
+            await service.siren_on(camera)
+        else:
+            await service.siren_off(camera)
+        return True
+
+    def set_siren(self, mac: str, on: bool, on_done: OnDone) -> None:
+        self._runner.submit("siren", self._do_siren(mac, on), on_done)
+
+    async def _do_spotlight(self, mac: str, on: bool) -> bool:
+        # wyzeapy maps this to the V3's spotlight accessory (P1056).
+        service = await self._service()
+        camera = self._get_camera(mac)
+        if on:
+            await service.floodlight_on(camera)
+        else:
+            await service.floodlight_off(camera)
+        return True
+
+    def set_spotlight(self, mac: str, on: bool, on_done: OnDone) -> None:
+        self._runner.submit("spotlight", self._do_spotlight(mac, on), on_done)
+
+    async def _do_motion_detection(self, mac: str, on: bool) -> bool:
+        service = await self._service()
+        camera = self._get_camera(mac)
+        if on:
+            await service.turn_on_motion_detection(camera)
+        else:
+            await service.turn_off_motion_detection(camera)
+        return True
+
+    def set_motion_detection(self, mac: str, on: bool, on_done: OnDone) -> None:
+        self._runner.submit(
+            "motion-detection", self._do_motion_detection(mac, on), on_done
+        )
+
+    async def _do_notifications(self, mac: str, on: bool) -> bool:
+        service = await self._service()
+        camera = self._get_camera(mac)
+        if on:
+            await service.turn_on_notifications(camera)
+        else:
+            await service.turn_off_notifications(camera)
+        return True
+
+    def set_notifications(self, mac: str, on: bool, on_done: OnDone) -> None:
+        self._runner.submit(
+            "notifications", self._do_notifications(mac, on), on_done
+        )
