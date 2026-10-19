@@ -22,6 +22,20 @@ SECRET_API_KEY = "wyze_api_key"
 SECRET_RTSP_URL = "rtsp_url"
 
 
+def clean_api_credential(value: str | None) -> str:
+    """Normalize a pasted Wyze API key ID / API key.
+
+    Both are sent as HTTP headers, and copying them from the Wyze developer
+    console easily picks up a trailing newline, tab or invisible character —
+    which the HTTP client rejects ("Forbidden control character detected in
+    headers"). Real keys never contain whitespace or control characters, so
+    drop them all.
+    """
+    if not value:
+        return ""
+    return "".join(ch for ch in value if ch.isprintable() and not ch.isspace())
+
+
 def redact_credentials_in_url(url: str) -> str:
     """Return *url* with any embedded userinfo replaced by ``***``.
 

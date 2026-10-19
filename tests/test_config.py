@@ -112,3 +112,14 @@ def test_secrets_fail_soft_without_keyring_backend(monkeypatch):
     assert config.get_secret("anything") == "value"  # in-memory session fallback
     config.delete_secret("anything")
     assert config.get_secret("anything") is None
+
+
+def test_api_credentials_lose_pasted_control_characters():
+    """Keys go out as HTTP headers; a pasted newline/tab must not survive."""
+    from wyze_print_monitor.config import clean_api_credential
+
+    assert clean_api_credential("880826bf-74ae-429b\n") == "880826bf-74ae-429b"
+    assert clean_api_credential(" \tabcDEF123\r\n") == "abcDEF123"
+    assert clean_api_credential("abc​def") == "abcdef"  # zero-width space
+    assert clean_api_credential(None) == ""
+    assert clean_api_credential("") == ""

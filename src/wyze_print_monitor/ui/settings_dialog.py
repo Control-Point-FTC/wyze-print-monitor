@@ -28,6 +28,7 @@ from ..config import (
     SECRET_PASSWORD,
     SECRET_RTSP_URL,
     Settings,
+    clean_api_credential,
     delete_secret,
     effective_rtsp_url,
     get_secret,
@@ -183,8 +184,8 @@ class SettingsDialog(QDialog):
     def _on_test(self) -> None:
         email = self.email_edit.text().strip()
         password = self.password_edit.text() or get_secret(SECRET_PASSWORD) or ""
-        key_id = self.key_id_edit.text().strip() or get_secret(SECRET_KEY_ID) or ""
-        api_key = self.api_key_edit.text() or get_secret(SECRET_API_KEY) or ""
+        key_id = clean_api_credential(self.key_id_edit.text() or get_secret(SECRET_KEY_ID))
+        api_key = clean_api_credential(self.api_key_edit.text() or get_secret(SECRET_API_KEY))
         if not (email and password and key_id and api_key):
             QMessageBox.warning(
                 self,
@@ -248,10 +249,12 @@ class SettingsDialog(QDialog):
         # Only overwrite secrets the user actually typed.
         if self.password_edit.text():
             secrets_ok = save_secret(SECRET_PASSWORD, self.password_edit.text()) and secrets_ok
-        if self.key_id_edit.text().strip():
-            secrets_ok = save_secret(SECRET_KEY_ID, self.key_id_edit.text().strip()) and secrets_ok
-        if self.api_key_edit.text():
-            secrets_ok = save_secret(SECRET_API_KEY, self.api_key_edit.text()) and secrets_ok
+        key_id = clean_api_credential(self.key_id_edit.text())
+        if key_id:
+            secrets_ok = save_secret(SECRET_KEY_ID, key_id) and secrets_ok
+        api_key = clean_api_credential(self.api_key_edit.text())
+        if api_key:
+            secrets_ok = save_secret(SECRET_API_KEY, api_key) and secrets_ok
         if not secrets_ok:
             QMessageBox.warning(
                 self,
