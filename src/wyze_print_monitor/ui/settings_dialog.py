@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import autostart
 from ..config import (
     SECRET_API_KEY,
     SECRET_KEY_ID,
@@ -125,6 +126,17 @@ class SettingsDialog(QDialog):
         self.on_top_check.setChecked(settings.always_on_top)
         form.addRow(self.on_top_check)
 
+        self.autostart_check = QCheckBox("Launch at startup")
+        if autostart.supported():
+            try:
+                self.autostart_check.setChecked(autostart.is_enabled())
+            except (NotImplementedError, OSError):
+                self.autostart_check.setEnabled(False)
+        else:
+            self.autostart_check.setEnabled(False)
+            self.autostart_check.setToolTip("Not supported on this platform")
+        form.addRow(self.autostart_check)
+
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -215,6 +227,15 @@ class SettingsDialog(QDialog):
             save_secret(SECRET_KEY_ID, self.key_id_edit.text().strip())
         if self.api_key_edit.text():
             save_secret(SECRET_API_KEY, self.api_key_edit.text())
+        if autostart.supported() and self.autostart_check.isEnabled():
+            try:
+                autostart.set_enabled(self.autostart_check.isChecked())
+            except (NotImplementedError, OSError) as exc:
+                QMessageBox.warning(
+                    self,
+                    "Launch at startup",
+                    f"Could not change the startup setting:\n{exc}",
+                )
         self.accept()
 
 

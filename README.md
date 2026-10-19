@@ -19,6 +19,7 @@ external camera. This app sits next to the slicer instead.
 - One-click **snapshot** (PNG), **clip recording** (MP4)
 - **Print timelapse**: captures a frame every N seconds, compiles to MP4 when stopped
 - Live fps / resolution readout and connection status pill
+- Launch at startup (Windows / Linux), toggleable in Settings
 
 **Control (right)**
 - Wyze cloud login (email + password + API key), with 2FA prompt when required
