@@ -45,7 +45,7 @@ from ..config import (
     save_settings,
 )
 from ..timelapse import TimelapseCollector, compile_timelapse
-from ..wyze_control import CameraInfo, WyzeController
+from ..wyze_control import CameraInfo, CameraState, WyzeController
 from .settings_dialog import SettingsDialog, forget_secrets
 
 
@@ -81,6 +81,8 @@ class MainWindow(QMainWindow):
         self.controller = WyzeController(self.runner)
 
         self._reader: StreamReader | None = None
+        self._retired_readers: list[StreamReader] = []
+        self._close_pending = False
         self._recorder: ClipRecorder | None = None
         self._timelapse: TimelapseCollector | None = None
         self._timelapse_write_warned = False
@@ -464,10 +466,20 @@ class MainWindow(QMainWindow):
 
     def _stop_stream(self) -> None:
         if self._reader is not None:
-            self._reader.frame_ready.disconnect(self._on_frame)
-            self._reader.state_changed.disconnect(self._on_stream_state)
-            self._reader.stop()
+            reader = self._reader
             self._reader = None
+            reader.frame_ready.disconnect(self._on_frame)
+            reader.state_changed.disconnect(self._on_stream_state)
+            if not reader.stop():
+                # Still blocked inside FFmpeg. Never let a running QThread be
+                # destroyed: keep a reference until it actually finishes, and
+                # closeEvent joins anything left here before exiting.
+                self._retired_readers.append(reader)
+                reader.finished.connect(lambda r=reader: self._forget_reader(r))
+
+    def _forget_reader(self, reader: StreamReader) -> None:
+        if reader in self._retired_readers:
+            self._retired_readers.remove(reader)
 
     def _on_stream_state(self, state: str, detail: str) -> None:
         labels = {
@@ -647,12 +659,20 @@ class MainWindow(QMainWindow):
     def _on_timelapse_compiled(self, path: str, count: int) -> None:
         self.timelapse_btn.setEnabled(True)
         self.statusBar().showMessage(f"Timelapse saved ({count} frames): {path}", 8000)
-        self._compile_worker = None
+        self._finish_compile()
 
     def _on_timelapse_failed(self, error: str) -> None:
         self.timelapse_btn.setEnabled(True)
         QMessageBox.warning(self, "Timelapse", error)
+        self._finish_compile()
+
+    def _finish_compile(self) -> None:
+        worker = self._compile_worker
         self._compile_worker = None
+        if worker is not None:
+            worker.wait()  # run() has emitted its last signal; join is instant
+        if self._close_pending:
+            QTimer.singleShot(0, self.close)
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -776,23 +796,53 @@ class MainWindow(QMainWindow):
         self.info_status.setText("Online" if cam.is_online else "Offline")
         self.info_firmware.setText(cam.firmware or "—")
         self.info_ip.setText(cam.ip or "—")
-        # The toggle states below reflect the previously selected camera (or
-        # nothing on first run). Reset them to a neutral off display so the new
-        # camera never appears to have a state we haven't read. Signals are
-        # blocked so the reset doesn't fire commands at the camera.
-        for widget in (self.siren_btn, self.spotlight_btn, self.motion_check, self.notify_check):
-            widget.blockSignals(True)
-        try:
-            self.siren_btn.setChecked(False)
-            self.siren_btn.setText("Siren: off")
-            self.spotlight_btn.setChecked(False)
-            self.spotlight_btn.setText("Spotlight: off")
-            self.motion_check.setChecked(False)
-            self.notify_check.setChecked(False)
-        finally:
-            for widget in (self.siren_btn, self.spotlight_btn, self.motion_check, self.notify_check):
-                widget.blockSignals(False)
+        # The toggles still show the previously selected camera. Hold them
+        # disabled as "…" until this camera's real states are read, so a first
+        # click can never send the opposite of what the user intends.
         self._set_controls_enabled(True)
+        self._apply_toggle_states(None, loading=True)
+        mac = cam.mac
+
+        def done(ok: bool, state, error: str) -> None:
+            selected = self._selected_camera()
+            if selected is None or selected.mac != mac:
+                return  # the user moved on to another camera meanwhile
+            if not ok:
+                self.statusBar().showMessage(f"Could not read camera state: {error}", 6000)
+                state = None
+            self._apply_toggle_states(state)
+
+        self.controller.get_state(mac, done)
+
+    def _apply_toggle_states(self, state: CameraState | None, loading: bool = False) -> None:
+        """Show the camera's siren/spotlight/motion/notify states.
+
+        A state that is unknown (not reported, or the read failed) is shown as
+        "unknown" but left usable; ``loading`` disables the toggles entirely.
+        Signals are blocked so displaying a state never sends a command.
+        """
+        def label(name: str, value: bool | None) -> str:
+            if loading:
+                return f"{name}: …"
+            return f"{name}: {'unknown' if value is None else ('on' if value else 'off')}"
+
+        values = {
+            self.siren_btn: ("Siren", state.siren if state else None),
+            self.spotlight_btn: ("Spotlight", state.spotlight if state else None),
+            self.motion_check: ("Motion detection", state.motion if state else None),
+            self.notify_check: ("Push notifications", state.notifications if state else None),
+        }
+        for widget, (name, value) in values.items():
+            widget.blockSignals(True)
+            try:
+                widget.setChecked(bool(value))
+                if isinstance(widget, QPushButton):
+                    widget.setText(label(name, value))
+                else:
+                    widget.setText(name if value is not None and not loading else label(name, value))
+                widget.setEnabled(not loading)
+            finally:
+                widget.blockSignals(False)
 
     def _cam_action(self, label: str, fn, *args) -> None:
         mac = self.settings.camera_mac
@@ -856,6 +906,7 @@ class MainWindow(QMainWindow):
         self.controller.set_spotlight(mac, checked, done)
 
     def _on_motion_changed(self, on: bool) -> None:
+        self.motion_check.setText("Motion detection")
         self._cam_action(
             "Motion detection " + ("on" if on else "off"),
             self.controller.set_motion_detection,
@@ -863,6 +914,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_notify_changed(self, on: bool) -> None:
+        self.notify_check.setText("Push notifications")
         self._cam_action(
             "Notifications " + ("on" if on else "off"),
             self.controller.set_notifications,
@@ -918,11 +970,22 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self._compile_worker is not None and self._compile_worker.isRunning():
             # The window owns the QThread: never tear down a running encoder.
-            self.statusBar().showMessage("Finishing timelapse compile before exit…")
-            self._compile_worker.wait(60000)
+            # Defer the close; _on_timelapse_compiled/_failed re-issue it once
+            # the MP4 is finished, however long that takes.
+            self._close_pending = True
+            self.statusBar().showMessage("Finishing timelapse compile — the app will close when it's done…")
+            event.ignore()
+            return
         if self._recorder is not None:
             self._recorder.close()
         self._stop_stream()
+        # Join every stream thread before the window (their parent) is
+        # destroyed. Each blocking FFmpeg call is bounded by its own timeout,
+        # so this cannot hang forever.
+        for reader in list(self._retired_readers):
+            reader.request_stop()
+            reader.wait()
+        self._retired_readers.clear()
         self.runner.stop()
         save_settings(self.settings)
         super().closeEvent(event)

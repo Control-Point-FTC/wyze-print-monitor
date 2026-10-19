@@ -32,6 +32,38 @@ class CameraInfo:
     ip: str = ""
 
 
+@dataclass
+class CameraState:
+    """Live toggle states read from the Wyze cloud. ``None`` = not reported."""
+
+    power: Optional[bool] = None
+    siren: Optional[bool] = None
+    spotlight: Optional[bool] = None
+    motion: Optional[bool] = None
+    notifications: Optional[bool] = None
+
+
+def _opt_bool(camera: Any, attr: str) -> Optional[bool]:
+    value = getattr(camera, attr, None)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "on")
+    return bool(value)
+
+
+def _camera_state(camera: Any) -> CameraState:
+    # Attribute names are wyzeapy's; motion/notify only exist once update()
+    # has read them, so a missing attribute stays None ("unknown").
+    return CameraState(
+        power=_opt_bool(camera, "on"),
+        siren=_opt_bool(camera, "siren"),
+        spotlight=_opt_bool(camera, "floodlight"),
+        motion=_opt_bool(camera, "motion"),
+        notifications=_opt_bool(camera, "notify"),
+    )
+
+
 def _camera_info(camera: Any) -> CameraInfo:
     raw = getattr(camera, "raw_dict", {}) or {}
     params = getattr(camera, "device_params", {}) or {}
@@ -122,6 +154,14 @@ class WyzeController:
         if camera is None:
             raise ValueError("Camera not found — refresh the camera list first.")
         return camera
+
+    async def _do_get_state(self, mac: str) -> CameraState:
+        service = await self._service()
+        camera = await service.update(self._get_camera(mac))
+        return _camera_state(camera)
+
+    def get_state(self, mac: str, on_done: OnDone) -> None:
+        self._runner.submit("camera-state", self._do_get_state(mac), on_done)
 
     # ----------------------------------------------------------------- actions
     async def _do_set_power(self, mac: str, on: bool) -> bool:

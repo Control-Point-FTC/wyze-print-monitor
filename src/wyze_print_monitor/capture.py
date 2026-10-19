@@ -29,10 +29,18 @@ class StreamReader(QThread):
         self.measured_fps = 0.0
         self.frame_size: tuple[int, int] = (0, 0)
 
-    def stop(self) -> None:
+    def request_stop(self) -> None:
         self._stop_requested = True
-        # Reads are bounded by CAP_PROP_READ_TIMEOUT_MSEC, so 12s is ample.
-        self.wait(12000)
+
+    def stop(self, timeout_ms: int = 12000) -> bool:
+        """Ask the thread to exit and wait for it. Returns True once it has.
+
+        Reads are bounded by CAP_PROP_READ_TIMEOUT_MSEC, so 12s is normally
+        ample — but a backend that ignores the timeout can overrun it, so the
+        caller must check the result before letting the thread be destroyed.
+        """
+        self.request_stop()
+        return self.wait(timeout_ms)
 
     def run(self) -> None:
         if not self._url:
