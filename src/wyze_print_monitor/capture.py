@@ -31,7 +31,8 @@ class StreamReader(QThread):
 
     def stop(self) -> None:
         self._stop_requested = True
-        self.wait(5000)
+        # Reads are bounded by CAP_PROP_READ_TIMEOUT_MSEC, so 12s is ample.
+        self.wait(12000)
 
     def run(self) -> None:
         if not self._url:
@@ -43,6 +44,10 @@ class StreamReader(QThread):
             cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
             # Keep the decode buffer tiny so the view stays close to live.
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Bound blocking opens/reads so stop() can always join the thread.
+            # (Supported by the FFmpeg backend; harmless no-ops otherwise.)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
             if not cap.isOpened():
                 cap.release()
                 self.state_changed.emit(
@@ -86,6 +91,7 @@ class ClipRecorder:
         self.output_path = output_path
         self._writer: cv2.VideoWriter | None = None
         self._fps = fps
+        self._size: tuple[int, int] | None = None
         self.frames_written = 0
 
     def write(self, frame: np.ndarray) -> None:
@@ -98,6 +104,19 @@ class ClipRecorder:
                 self._fps,
                 (w, h),
             )
+            if not self._writer.isOpened():
+                self._writer.release()
+                self._writer = None
+                raise IOError(
+                    f"Could not open video writer for {self.output_path} "
+                    "(folder unwritable or mp4v encoder unavailable)."
+                )
+            self._size = (w, h)
+        # If the stream resolution changed mid-recording (e.g. RTSP URL
+        # switched), resize into the original frame size instead of dropping.
+        assert self._size is not None
+        if (frame.shape[1], frame.shape[0]) != self._size:
+            frame = cv2.resize(frame, self._size)
         self._writer.write(frame)
         self.frames_written += 1
 

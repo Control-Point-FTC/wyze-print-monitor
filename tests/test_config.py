@@ -2,7 +2,12 @@
 import json
 import os
 
-from wyze_print_monitor.config import Settings, load_settings, save_settings
+from wyze_print_monitor.config import (
+    Settings,
+    load_settings,
+    redact_credentials_in_url,
+    save_settings,
+)
 
 
 def test_round_trip(tmp_path):
@@ -19,6 +24,9 @@ def test_round_trip(tmp_path):
     )
     save_settings(original, path)
     loaded = load_settings(path)
+    # The RTSP URL is redacted on save (credentials live in the keyring).
+    assert loaded.rtsp_url == "rtsp://***@192.168.1.10/live"
+    original.rtsp_url = loaded.rtsp_url
     assert loaded == original
 
 
@@ -53,3 +61,27 @@ def test_resolved_dirs_honor_overrides(tmp_path):
     settings = Settings(snapshot_dir="/tmp/a", video_dir="/tmp/b")
     assert settings.resolved_snapshot_dir() == "/tmp/a"
     assert settings.resolved_video_dir() == "/tmp/b"
+
+
+def test_redact_credentials_in_url():
+    assert (
+        redact_credentials_in_url("rtsp://user:s3cret@192.168.1.10/live")
+        == "rtsp://***@192.168.1.10/live"
+    )
+    assert (
+        redact_credentials_in_url("rtsp://192.168.1.10/live")
+        == "rtsp://192.168.1.10/live"
+    )
+    assert redact_credentials_in_url("") == ""
+
+
+def test_save_redacts_rtsp_credentials(tmp_path):
+    """Camera credentials must never land in the settings JSON on disk."""
+    path = str(tmp_path / "settings.json")
+    save_settings(
+        Settings(rtsp_url="rtsp://user:s3cret@192.168.1.10/live"), path
+    )
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    assert data["rtsp_url"] == "rtsp://***@192.168.1.10/live"
+    assert "s3cret" not in json.dumps(data)

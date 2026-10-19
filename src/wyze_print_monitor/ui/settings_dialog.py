@@ -23,8 +23,10 @@ from ..config import (
     SECRET_API_KEY,
     SECRET_KEY_ID,
     SECRET_PASSWORD,
+    SECRET_RTSP_URL,
     Settings,
     delete_secret,
+    effective_rtsp_url,
     get_secret,
     save_secret,
 )
@@ -51,7 +53,9 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
-        self.rtsp_edit = QLineEdit(settings.rtsp_url)
+        # Show the real URL (from the keyring when present); the settings file
+        # only ever holds a redacted copy.
+        self.rtsp_edit = QLineEdit(effective_rtsp_url(settings))
         self.rtsp_edit.setPlaceholderText("rtsp://user:pass@192.168.x.x/live")
         form.addRow("RTSP URL", self.rtsp_edit)
 
@@ -189,7 +193,12 @@ class SettingsDialog(QDialog):
 
     def _on_save(self) -> None:
         s = self._settings
-        s.rtsp_url = self.rtsp_edit.text().strip()
+        rtsp_url = self.rtsp_edit.text().strip()
+        s.rtsp_url = rtsp_url  # save_settings() redacts credentials on write
+        if rtsp_url:
+            save_secret(SECRET_RTSP_URL, rtsp_url)
+        else:
+            delete_secret(SECRET_RTSP_URL)
         s.wyze_email = self.email_edit.text().strip()
         s.timelapse_interval_sec = self.interval_spin.value()
         s.snapshot_dir = self.snapshot_edit.text().strip()
@@ -210,5 +219,5 @@ class SettingsDialog(QDialog):
 
 
 def forget_secrets() -> None:
-    for name in (SECRET_PASSWORD, SECRET_KEY_ID, SECRET_API_KEY):
+    for name in (SECRET_PASSWORD, SECRET_KEY_ID, SECRET_API_KEY, SECRET_RTSP_URL):
         delete_secret(name)

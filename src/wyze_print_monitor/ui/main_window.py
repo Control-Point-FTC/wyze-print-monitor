@@ -6,8 +6,8 @@ import os
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QImage, QPixmap
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +33,7 @@ from ..config import (
     SECRET_KEY_ID,
     SECRET_PASSWORD,
     Settings,
+    effective_rtsp_url,
     get_secret,
     load_settings,
     save_settings,
@@ -40,6 +41,26 @@ from ..config import (
 from ..timelapse import TimelapseCollector, compile_timelapse
 from ..wyze_control import CameraInfo, WyzeController
 from .settings_dialog import SettingsDialog, forget_secrets
+
+
+class TimelapseCompileWorker(QThread):
+    """Compiles saved JPEG frames into an MP4 off the GUI thread."""
+
+    done = Signal(str, int)  # output path, frame count
+    failed = Signal(str)
+
+    def __init__(self, frames_dir: str, output_path: str, parent=None) -> None:
+        super().__init__(parent)
+        self._frames_dir = frames_dir
+        self._output_path = output_path
+
+    def run(self) -> None:
+        try:
+            count = compile_timelapse(self._frames_dir, self._output_path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the UI, not swallowed
+            self.failed.emit(f"Could not compile timelapse: {exc}")
+        else:
+            self.done.emit(self._output_path, count)
 
 
 class MainWindow(QMainWindow):
@@ -57,6 +78,7 @@ class MainWindow(QMainWindow):
         self._recorder: ClipRecorder | None = None
         self._timelapse: TimelapseCollector | None = None
         self._timelapse_frames_dir = ""
+        self._compile_worker: TimelapseCompileWorker | None = None
         self._cameras: list[CameraInfo] = []
         self._last_frame: np.ndarray | None = None
 
@@ -72,16 +94,25 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # ---- left: monitor ----
+        # ---- left: monitor (eufyMake-style full-width header bar + body) ----
         monitor = QWidget()
         monitor_layout = QVBoxLayout(monitor)
-        monitor_layout.setContentsMargins(8, 8, 8, 8)
+        monitor_layout.setContentsMargins(0, 0, 0, 0)
+        monitor_layout.setSpacing(0)
+
+        monitor_header = QLabel("Monitor")
+        monitor_header.setObjectName("paneHeader")
+        monitor_layout.addWidget(monitor_header)
+
+        monitor_body = QWidget()
+        body_layout = QVBoxLayout(monitor_body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
 
         self.video_label = QLabel("No signal — set your RTSP URL in Settings.")
         self.video_label.setObjectName("videoLabel")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setMinimumSize(480, 270)
-        monitor_layout.addWidget(self.video_label, 1)
+        body_layout.addWidget(self.video_label, 1)
 
         info_row = QHBoxLayout()
         self.status_pill = QLabel("Idle")
@@ -91,7 +122,7 @@ class MainWindow(QMainWindow):
         self.stream_info_label.setStyleSheet("color: #9a9ea5;")
         info_row.addWidget(self.status_pill)
         info_row.addWidget(self.stream_info_label, 1)
-        monitor_layout.addLayout(info_row)
+        body_layout.addLayout(info_row)
 
         btn_row = QHBoxLayout()
         self.snapshot_btn = QPushButton("Snapshot")
@@ -107,13 +138,23 @@ class MainWindow(QMainWindow):
         for b in (self.snapshot_btn, self.record_btn, self.timelapse_btn, self.fullscreen_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
-        monitor_layout.addLayout(btn_row)
+        body_layout.addLayout(btn_row)
+        monitor_layout.addWidget(monitor_body, 1)
         splitter.addWidget(monitor)
 
         # ---- right: control panel ----
+        right = QWidget()
+        right.setFixedWidth(340)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        control_header = QLabel("Control")
+        control_header.setObjectName("paneHeader")
+        right_layout.addWidget(control_header)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(340)
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(8, 8, 8, 8)
@@ -127,7 +168,8 @@ class MainWindow(QMainWindow):
         panel_layout.addStretch(1)
 
         scroll.setWidget(panel)
-        splitter.addWidget(scroll)
+        right_layout.addWidget(scroll, 1)
+        splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         self.setCentralWidget(splitter)
@@ -274,17 +316,13 @@ class MainWindow(QMainWindow):
 
     def _open_folder(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
-        import subprocess
-
-        if os.name == "nt":
-            os.startfile(path)  # noqa: S606 - local folder the user chose
-        else:
-            subprocess.Popen(["xdg-open", path])  # noqa: S603,S607 - local folder
+        # QDesktopServices handles Windows/macOS/Linux without shelling out.
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     # ------------------------------------------------------------------ stream
     def _start_stream(self) -> None:
         self._stop_stream()
-        self._reader = StreamReader(self.settings.rtsp_url, self)
+        self._reader = StreamReader(effective_rtsp_url(self.settings), self)
         self._reader.frame_ready.connect(self._on_frame)
         self._reader.state_changed.connect(self._on_stream_state)
         self._reader.start()
@@ -317,7 +355,16 @@ class MainWindow(QMainWindow):
                 self.stream_info_label.setText(f"{w}×{h}  •  {fps:.0f} fps")
 
         if self._recorder is not None:
-            self._recorder.write(frame)
+            try:
+                self._recorder.write(frame)
+            except IOError as exc:
+                # e.g. folder became unwritable mid-recording: stop cleanly
+                # instead of claiming a good clip at the end.
+                self._recorder.close()
+                self._recorder = None
+                self.record_btn.setChecked(False)
+                self.record_btn.setText("Record")
+                QMessageBox.warning(self, "Recording failed", str(exc))
         if self._timelapse is not None:
             self._timelapse.maybe_capture(frame)
 
@@ -350,7 +397,10 @@ class MainWindow(QMainWindow):
             path = os.path.join(
                 self.settings.resolved_video_dir(), f"clip_{stamp}.mp4"
             )
-            self._recorder = ClipRecorder(path)
+            # Record at the stream's measured rate so clips play back in real
+            # time instead of a fixed (wrong) 20 fps.
+            fps = self._reader.measured_fps if self._reader is not None else 0.0
+            self._recorder = ClipRecorder(path, fps=fps or 20.0)
             self.record_btn.setText("Stop recording")
             self.statusBar().showMessage("Recording…", 3000)
         else:
@@ -391,13 +441,24 @@ class MainWindow(QMainWindow):
                 self.settings.resolved_video_dir(),
                 f"timelapse_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.mp4",
             )
-            try:
-                count = compile_timelapse(collector.frames_dir, output)
-                self.statusBar().showMessage(
-                    f"Timelapse saved ({count} frames): {output}", 8000
-                )
-            except (FileNotFoundError, ValueError) as exc:
-                QMessageBox.warning(self, "Timelapse", str(exc))
+            # Compile off the GUI thread: a long print leaves thousands of
+            # frames to encode, which would freeze the live view.
+            self.timelapse_btn.setEnabled(False)
+            self.statusBar().showMessage("Compiling timelapse…", 3000)
+            self._compile_worker = TimelapseCompileWorker(collector.frames_dir, output, self)
+            self._compile_worker.done.connect(self._on_timelapse_compiled)
+            self._compile_worker.failed.connect(self._on_timelapse_failed)
+            self._compile_worker.start()
+
+    def _on_timelapse_compiled(self, path: str, count: int) -> None:
+        self.timelapse_btn.setEnabled(True)
+        self.statusBar().showMessage(f"Timelapse saved ({count} frames): {path}", 8000)
+        self._compile_worker = None
+
+    def _on_timelapse_failed(self, error: str) -> None:
+        self.timelapse_btn.setEnabled(True)
+        QMessageBox.warning(self, "Timelapse", error)
+        self._compile_worker = None
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -468,13 +529,22 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Camera list failed", error)
                 return
             self._cameras = result or []
-            self.camera_combo.clear()
-            for cam in self._cameras:
-                self.camera_combo.addItem(f"{cam.nickname} ({cam.product_model})", cam.mac)
-            if self.settings.camera_mac:
-                index = self.camera_combo.findData(self.settings.camera_mac)
-                if index >= 0:
-                    self.camera_combo.setCurrentIndex(index)
+            # Block signals while rebuilding: adding the first item would
+            # otherwise fire currentIndexChanged, which overwrites the saved
+            # camera_mac with the first camera before we restore the selection.
+            self.camera_combo.blockSignals(True)
+            try:
+                self.camera_combo.clear()
+                for cam in self._cameras:
+                    self.camera_combo.addItem(
+                        f"{cam.nickname} ({cam.product_model})", cam.mac
+                    )
+                if self.settings.camera_mac:
+                    index = self.camera_combo.findData(self.settings.camera_mac)
+                    if index >= 0:
+                        self.camera_combo.setCurrentIndex(index)
+            finally:
+                self.camera_combo.blockSignals(False)
             self._update_connection_ui()
 
         self.controller.list_cameras(done)
@@ -497,6 +567,22 @@ class MainWindow(QMainWindow):
         self.info_status.setText("Online" if cam.is_online else "Offline")
         self.info_firmware.setText(cam.firmware or "—")
         self.info_ip.setText(cam.ip or "—")
+        # The toggle states below reflect the previously selected camera (or
+        # nothing on first run). Reset them to a neutral off display so the new
+        # camera never appears to have a state we haven't read. Signals are
+        # blocked so the reset doesn't fire commands at the camera.
+        for widget in (self.siren_btn, self.spotlight_btn, self.motion_check, self.notify_check):
+            widget.blockSignals(True)
+        try:
+            self.siren_btn.setChecked(False)
+            self.siren_btn.setText("Siren: off")
+            self.spotlight_btn.setChecked(False)
+            self.spotlight_btn.setText("Spotlight: off")
+            self.motion_check.setChecked(False)
+            self.notify_check.setChecked(False)
+        finally:
+            for widget in (self.siren_btn, self.spotlight_btn, self.motion_check, self.notify_check):
+                widget.blockSignals(False)
         self._set_controls_enabled(True)
 
     def _cam_action(self, label: str, fn, *args) -> None:
@@ -583,9 +669,15 @@ class MainWindow(QMainWindow):
             save_settings(self.settings)
             self._apply_always_on_top()
             self.on_top_action.setChecked(self.settings.always_on_top)
-            if self.settings.rtsp_url:
+            if effective_rtsp_url(self.settings):
                 self._start_stream()
-            self._refresh_camera_combo_from_settings()
+            # The dialog may have completed a fresh login, in which case the
+            # main window's camera list is still empty — repopulate it so the
+            # controls don't stay disabled after setup.
+            if self.controller.logged_in:
+                self._on_refresh_cameras()
+            else:
+                self._refresh_camera_combo_from_settings()
 
     def _refresh_camera_combo_from_settings(self) -> None:
         if not self._cameras or not self.settings.camera_mac:
@@ -605,9 +697,13 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Wyze credentials removed from keyring.", 5000)
 
     def _apply_always_on_top(self) -> None:
+        # Capture visibility BEFORE changing flags: setWindowFlag can hide the
+        # window on some platforms, which would make a later isVisible() check
+        # lie and leave the app hidden.
+        was_visible = self.isVisible()
         self.setWindowFlag(Qt.WindowStaysOnTopHint, self.settings.always_on_top)
         # Toggling the flag needs the window to be re-shown on some platforms.
-        if self.isVisible():
+        if was_visible:
             self.show()
 
     def _toggle_always_on_top(self, checked: bool) -> None:

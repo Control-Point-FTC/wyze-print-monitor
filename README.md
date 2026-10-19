@@ -42,11 +42,9 @@ external camera. This app sits next to the slicer instead.
 ## Install & run
 
 ```bash
-pip install -r requirements.txt
-# or: pip install -e .
+pip install -e .   # installs the app and the `wyze-print-monitor` command
 
 wyze-print-monitor
-# or: python -m wyze_print_monitor   (from the src/ directory)
 ```
 
 First run: **File → Settings…** → paste the RTSP URL, Wyze email, password,

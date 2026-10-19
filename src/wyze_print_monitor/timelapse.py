@@ -69,6 +69,12 @@ def compile_timelapse(
     writer = cv2.VideoWriter(
         output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
     )
+    if not writer.isOpened():
+        writer.release()
+        raise IOError(
+            f"Could not open video writer for {output_path} "
+            "(folder unwritable or mp4v encoder unavailable)."
+        )
     written = 0
     try:
         for path in paths:

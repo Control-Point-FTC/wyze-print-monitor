@@ -17,6 +17,35 @@ KEYRING_SERVICE = "wyze-print-monitor"
 SECRET_PASSWORD = "wyze_password"
 SECRET_KEY_ID = "wyze_key_id"
 SECRET_API_KEY = "wyze_api_key"
+# The full RTSP URL (it embeds the camera username/password) is a secret too:
+# settings.json only ever stores a redacted copy.
+SECRET_RTSP_URL = "rtsp_url"
+
+
+def redact_credentials_in_url(url: str) -> str:
+    """Return *url* with any embedded userinfo replaced by ``***``.
+
+    ``rtsp://user:pass@192.168.1.10/live`` becomes ``rtsp://***@192.168.1.10/live``.
+    """
+    if "@" not in url:
+        return url
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(url)
+        if not parts.username and not parts.password:
+            return url
+        host = parts.hostname or ""
+        if parts.port:
+            host += f":{parts.port}"
+        return urlunsplit(parts._replace(netloc=f"***@{host}"))
+    except Exception:
+        return url
+
+
+def effective_rtsp_url(settings: "Settings") -> str:
+    """The real RTSP URL: keyring secret wins, settings file is the fallback."""
+    return get_secret(SECRET_RTSP_URL) or settings.rtsp_url
 
 
 def config_dir() -> str:
@@ -79,9 +108,13 @@ def load_settings(path: str | None = None) -> Settings:
 def save_settings(settings: Settings, path: str | None = None) -> None:
     path = path or settings_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    data = asdict(settings)
+    # Never persist camera credentials to disk: the settings file keeps only a
+    # redacted copy, the real URL lives in the OS keyring (see SECRET_RTSP_URL).
+    data["rtsp_url"] = redact_credentials_in_url(data.get("rtsp_url", ""))
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(asdict(settings), fh, indent=2)
+        json.dump(data, fh, indent=2)
     os.replace(tmp, path)
 
 
