@@ -1,185 +1,145 @@
 """Dark theme in the design language of eufyMake Studio's Device tab.
 
-Near-black app background, slightly lifted panel surfaces, full-width
-section header bars ("Monitor" / "Control"), and eufyMake's medium green
-as the single accent color.
+Colors are sampled from the running Studio app so the full window and the
+panels docked inside Studio look the same: near-black app background,
+#292a2d cards separated by gaps, thin dividers, and Studio's green accent
+(dark-green buttons with green text, like its Retract / Extrude buttons).
+
+Widgets are transparent by default; only containers (window, cards,
+dialogs, menus, inputs) paint a background. That keeps every control
+sitting cleanly on the card it lives in.
 """
 
-# eufyMake Studio Device-tab palette, sampled from the app.
-BG_APP = "#141518"      # app background
-BG_PANEL = "#1d1f22"    # panel surface
-BG_HEADER = "#26282d"   # section header bar
-BG_INPUT = "#24262a"
-BORDER = "#33363b"
-TEXT = "#d7d9dc"
-TEXT_DIM = "#9a9ea5"
-TEXT_HEADER = "#c9ccd1"
-GREEN = "#6fbf5f"       # accent: buttons, toggles, active states
-GREEN_DARK = "#4e8a44"
-GREEN_TEXT = "#7cc47f"  # accent text on dark (Retract/Extrude style)
-RED = "#8a2f2f"
+# eufyMake Studio palette, sampled from the app.
+APP_BG = "#18191b"       # window background / gaps between cards
+CARD = "#292a2d"         # card surface (Monitor, Control, Others…)
+DIVIDER = "#3e3f42"      # header underline, separators
+INPUT_BG = "#1f2023"
+VIDEO_BG = "#000000"
+TEXT = "#e6e7e9"
+TEXT_DIM = "#9ea1a6"
+TEXT_FAINT = "#63666b"
+GREEN = "#62d361"        # accent (Start Printing)
+GREEN_BTN = "#263229"    # Retract / Extrude button fill
+GREEN_BTN_HOVER = "#2e3d31"
+SELECTED = "#354138"     # selected row (My Printer list)
+RED = "#e05a5a"
+AMBER = "#e0a84a"
+
+# Status chip colors (background, text).
+CHIP_LIVE = ("#2f7d3a", "#ffffff")
+CHIP_BUSY = ("#8a6d2f", "#ffffff")
+CHIP_ERROR = ("#8a2f2f", "#ffffff")
+CHIP_IDLE = ("#3d4148", "#d7d9dc")
+
+SLIDER_QSS = f"""
+QSlider::groove:horizontal {{ height: 4px; background: {DIVIDER}; border-radius: 2px; }}
+QSlider::sub-page:horizontal {{ background: {GREEN}; border-radius: 2px; }}
+QSlider::handle:horizontal {{
+    background: {TEXT}; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px;
+}}
+QSlider::handle:horizontal:hover {{ background: #ffffff; }}
+QSlider::groove:horizontal:disabled {{ background: #34363a; }}
+QSlider::sub-page:horizontal:disabled {{ background: #3f5a40; }}
+QSlider::handle:horizontal:disabled {{ background: {TEXT_FAINT}; }}
+"""
 
 DARK_QSS = f"""
 QWidget {{
-    background-color: {BG_APP};
+    background: transparent;
     color: {TEXT};
     font-family: "Segoe UI", sans-serif;
     font-size: 13px;
 }}
-QMainWindow::separator {{ background: {BORDER}; }}
+QMainWindow, QDialog {{ background: {APP_BG}; }}
+QStatusBar {{ background: {APP_BG}; color: {TEXT_DIM}; }}
+QStatusBar::item {{ border: none; }}
+QMenuBar {{ background: {APP_BG}; }}
+QMenuBar::item {{ padding: 4px 10px; }}
+QMenuBar::item:selected {{ background: {CARD}; }}
+QMenu {{ background: {CARD}; border: 1px solid {DIVIDER}; padding: 4px 0; }}
+QMenu::item {{ padding: 5px 22px; }}
+QMenu::item:selected {{ background: {SELECTED}; }}
+QMenu::separator {{ height: 1px; background: {DIVIDER}; margin: 4px 8px; }}
+QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid {DIVIDER}; padding: 4px; }}
 
-/* Full-width section header bars, eufyMake "Monitor"/"Control" style. */
-QLabel#paneHeader {{
-    background-color: {BG_HEADER};
-    color: {TEXT_HEADER};
-    font-size: 14px;
-    padding: 8px 12px;
-    border: none;
+/* Cards: Studio's panels. Header bar + divider, body below. */
+QFrame#card {{ background: {CARD}; border: none; }}
+QWidget#cardHeader {{ border-bottom: 1px solid {DIVIDER}; }}
+QLabel#cardTitle {{ font-size: 15px; }}
+QLabel#section {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }}
+QLabel#dim {{ color: {TEXT_DIM}; }}
+QLabel#chip, QLabel#statusPill {{
+    border-radius: 9px; padding: 1px 9px; font-size: 11px; font-weight: 600;
 }}
 
-QGroupBox {{
-    background-color: {BG_PANEL};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-    margin-top: 14px;
-    padding-top: 10px;
-    font-weight: 600;
-    color: {TEXT_HEADER};
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 4px;
-    background-color: transparent;
-}}
-QLabel {{ background: transparent; }}
-QLabel#videoLabel {{
-    background-color: #000;
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-}}
-QLabel#statusPill {{
-    border-radius: 10px;
-    padding: 3px 10px;
-    font-weight: 600;
-}}
+/* Monitor picture + toolbar under it. */
+QLabel#videoLabel {{ background: {VIDEO_BG}; color: {TEXT_DIM}; font-size: 14px; }}
+QWidget#toolbar {{ border-top: 1px solid {DIVIDER}; }}
+QToolButton {{ border: none; border-radius: 4px; padding: 4px 8px; }}
+QToolButton:hover {{ background: #34363a; }}
+QToolButton:checked {{ background: {SELECTED}; color: {GREEN}; }}
+QToolButton:disabled {{ color: {TEXT_FAINT}; }}
+QToolButton::menu-indicator {{ image: none; width: 0; }}
+
+/* Buttons: Studio's dark-green style; the primary one is solid green. */
 QPushButton {{
-    background-color: #2e3136;
-    border: 1px solid #3d4148;
-    border-radius: 6px;
-    padding: 7px 12px;
+    background: {GREEN_BTN}; color: {GREEN}; border: none; border-radius: 3px;
+    padding: 6px 12px; min-height: 18px;
 }}
-QPushButton:hover {{ background-color: #3a3e44; border-color: #4a4f57; }}
-QPushButton:pressed {{ background-color: #26292d; }}
-QPushButton:disabled {{ color: #6b6f76; background-color: #24262a; }}
-QPushButton#accentButton {{
-    background-color: {GREEN};
-    border-color: {GREEN};
-    color: #10240f;
-    font-weight: 700;
-}}
-QPushButton#accentButton:hover {{ background-color: {GREEN_TEXT}; }}
-QPushButton#accentButton:checked {{ background-color: {GREEN_DARK}; color: #ffffff; }}
-QPushButton#dangerButton {{
-    background-color: {RED};
-    border-color: {RED};
-    color: #ffffff;
-}}
-QPushButton#dangerButton:hover {{ background-color: #a03838; }}
-QPushButton#toggleOn {{
-    background-color: {GREEN};
-    border-color: {GREEN};
-    color: #10240f;
-    font-weight: 700;
-}}
+QPushButton:hover {{ background: {GREEN_BTN_HOVER}; }}
+QPushButton:checked {{ background: {GREEN}; color: #10240f; }}
+QPushButton:disabled {{ background: #2f3033; color: {TEXT_FAINT}; }}
+QPushButton#accentButton {{ background: {GREEN}; color: #10240f; font-weight: 600; }}
+QPushButton#accentButton:hover {{ background: #74dc73; }}
+QPushButton#danger {{ background: #3a2626; color: {RED}; }}
+QPushButton#danger:hover {{ background: #4a2c2c; }}
+QPushButton#danger:checked {{ background: {RED}; color: #2a0f0f; }}
+QPushButton#danger:disabled {{ background: #2f3033; color: {TEXT_FAINT}; }}
+QPushButton#plain {{ background: #34363a; color: {TEXT}; }}
+QPushButton#plain:hover {{ background: #3d4044; }}
+QPushButton#plain:checked {{ background: {SELECTED}; color: {GREEN}; }}
+
 QLineEdit, QComboBox, QSpinBox {{
-    background-color: {BG_INPUT};
-    border: 1px solid #3d4148;
-    border-radius: 6px;
-    padding: 6px 8px;
-    selection-background-color: {GREEN_DARK};
+    background: {INPUT_BG}; border: 1px solid {DIVIDER}; border-radius: 3px;
+    padding: 5px 8px; selection-background-color: {SELECTED};
 }}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{ border-color: {GREEN}; }}
 QComboBox QAbstractItemView {{
-    background-color: {BG_INPUT};
-    border: 1px solid #3d4148;
-    selection-background-color: {GREEN_DARK};
+    background: {CARD}; border: 1px solid {DIVIDER}; selection-background-color: {SELECTED};
 }}
 QCheckBox {{ spacing: 8px; }}
 QCheckBox::indicator {{
-    width: 16px; height: 16px;
-    border: 1px solid #3d4148;
-    border-radius: 4px;
-    background: {BG_INPUT};
+    width: 15px; height: 15px; border-radius: 3px;
+    border: 1px solid #5d6066; background: {APP_BG};
 }}
 QCheckBox::indicator:checked {{ background: {GREEN}; border-color: {GREEN}; }}
-QStatusBar {{ background-color: {BG_APP}; color: {TEXT_DIM}; }}
-QMenuBar {{ background-color: {BG_APP}; }}
-QMenuBar::item:selected {{ background: #2e3136; }}
-QMenu {{ background-color: {BG_INPUT}; border: 1px solid #3d4148; }}
-QMenu::item:selected {{ background-color: {GREEN_DARK}; }}
-QToolTip {{ background-color: {BG_INPUT}; color: {TEXT}; border: 1px solid #3d4148; }}
-QScrollArea {{ border: none; background-color: {BG_APP}; }}
-QScrollBar:vertical {{ background: {BG_APP}; width: 10px; }}
-QScrollBar::handle:vertical {{ background: #3d4148; border-radius: 5px; min-height: 20px; }}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QCheckBox:disabled {{ color: {TEXT_FAINT}; }}
 
-/* eufyMake-style view tab bar ("Monitor" active, green underline). */
-QTabBar {{ background: {BG_APP}; }}
+QScrollArea {{ border: none; }}
+QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #4a4d52; border-radius: 3px; min-height: 24px; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+
+/* Camera / Image tabs in the right card. */
+QTabWidget::pane {{ border: none; border-top: 1px solid {DIVIDER}; }}
 QTabBar::tab {{
-    background: transparent;
-    color: {TEXT_DIM};
-    font-size: 14px;
-    padding: 10px 28px;
-    margin: 0 8px;
-    border: none;
+    background: transparent; color: {TEXT_DIM}; padding: 8px 16px; border: none;
+    border-bottom: 2px solid transparent; font-size: 14px;
 }}
-QTabBar::tab:selected {{
-    color: {GREEN_TEXT};
-    border-bottom: 2px solid {GREEN};
-}}
+QTabBar::tab:selected {{ color: {GREEN}; border-bottom: 2px solid {GREEN}; }}
 QTabBar::tab:!selected:hover {{ color: {TEXT}; }}
 
-/* Left device sidebar, eufyMake "My Printer" style. */
-QListWidget#cameraList {{
-    background: {BG_PANEL};
-    border: none;
-    outline: none;
-}}
-QListWidget#cameraList::item {{
-    padding: 10px 12px;
-    border: none;
-    border-left: 3px solid transparent;
-}}
-QListWidget#cameraList::item:hover {{ background: {BG_HEADER}; }}
-QListWidget#cameraList::item:selected {{
-    background: rgba(111, 191, 95, 0.16);
-    color: {TEXT};
-    border-left: 3px solid {GREEN};
-}}
+/* "My Camera" list, Studio "My Printer" style. */
+QListWidget#cameraList {{ border: none; outline: none; }}
+QListWidget#cameraList::item {{ padding: 10px 12px; border: none; }}
+QListWidget#cameraList::item:hover {{ background: #303134; }}
+QListWidget#cameraList::item:selected {{ background: {SELECTED}; color: {TEXT}; }}
 
-/* Big readout cards, eufyMake temperature-card style. */
-QFrame#statCard {{
-    background: {BG_PANEL};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-}}
-QLabel#statValue {{
-    background: transparent;
-    font-size: 26px;
-    font-weight: 700;
-    color: #e8eaec;
-}}
-QLabel#statCaption {{
-    background: transparent;
-    font-size: 12px;
-    color: {TEXT_DIM};
-}}
-
-/* Thin video info bar under the picture, eufyMake player-bar style. */
-QWidget#playerBar {{
-    background: {BG_HEADER};
-    border: none;
-}}
-QLabel#sessionValue {{ color: {TEXT}; font-weight: 600; }}
+/* Big readouts, Studio temperature style. */
+QLabel#statValue {{ font-size: 28px; font-weight: 700; color: {TEXT}; }}
+QLabel#statCaption {{ font-size: 12px; color: {TEXT_DIM}; }}
+QLabel#sessionValue {{ font-weight: 600; }}
 QLabel#sessionCaption {{ color: {TEXT_DIM}; }}
-"""
+""" + SLIDER_QSS

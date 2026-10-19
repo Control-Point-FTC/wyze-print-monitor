@@ -14,6 +14,8 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
+from .adjust import IDENTITY, ImageAdjustments, apply_adjustments
+
 # Every blocking FFmpeg call is bounded so stop() can always join the thread.
 OPEN_TIMEOUT_MS = 5000
 READ_TIMEOUT_MS = 5000
@@ -56,6 +58,10 @@ class StreamReader(QThread):
         self._stop_requested = False
         self.measured_fps = 0.0
         self.frame_size: tuple[int, int] = (0, 0)
+        # Picture adjustments, applied on this thread to every frame before
+        # it's emitted (so view, snapshots, clips and timelapses all match).
+        # Immutable, so the GUI thread can swap it in with one assignment.
+        self.adjustments: ImageAdjustments = IDENTITY
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -102,7 +108,13 @@ class StreamReader(QThread):
                     self.measured_fps = frames / elapsed
                     frames, t_start = 0, time.monotonic()
                     h, w = frame.shape[:2]
-                    self.frame_size = (w, h)
+                    self.frame_size = (w, h)  # the camera's own resolution
+                adjustments = self.adjustments  # one read: the GUI may swap it
+                if not adjustments.is_identity():
+                    try:
+                        frame = apply_adjustments(frame, adjustments)
+                    except cv2.error:
+                        pass  # never let a bad setting stop the stream
                 self.frame_ready.emit(frame)
             cap.release()
             if not self._stop_requested:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 APP_NAME = "wyze-print-monitor"
 KEYRING_SERVICE = "wyze-print-monitor"
@@ -98,6 +98,8 @@ class Settings:
     # "My Printer" list that has this camera; 0 = show for any printer.
     dock_in_studio: bool = True
     dock_printer_row: int = 1
+    # Picture adjustments (adjust.ImageAdjustments.to_dict()); {} = none.
+    image_adjustments: dict = field(default_factory=dict)
 
     def resolved_snapshot_dir(self) -> str:
         if self.snapshot_dir:

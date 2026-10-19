@@ -24,8 +24,8 @@ from __future__ import annotations
 import sys
 import time
 
-from PySide6.QtCore import QObject, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QWindow
+from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtGui import QPixmap, QWindow
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -43,25 +43,37 @@ from PySide6.QtWidgets import (
 )
 
 from .. import studio_win32 as win
+from .adjust_panel import ImageAdjustPanel
+from .icons import (
+    ICON_ADJUST,
+    ICON_CAMERA,
+    ICON_FOLDER,
+    ICON_FULLSCREEN,
+    ICON_RECORD,
+    ICON_SETTINGS,
+    ICON_TIMER,
+    ICON_WINDOW,
+    glyph_icon,
+)
+from .styles import (
+    APP_BG,
+    CARD,
+    DIVIDER,
+    GREEN,
+    GREEN_BTN,
+    GREEN_BTN_HOVER,
+    RED,
+    SELECTED,
+    TEXT,
+    TEXT_DIM,
+    VIDEO_BG,
+)
 
 TICK_MS = 200
 SEARCH_EVERY_S = 1.5   # how often to look for Studio while it isn't found
 RELOCATE_EVERY_S = 3.0  # re-find printer rows (Studio rebuilds them on refresh)
 HOLD_LAST_FRAME_S = 5.0  # keep the last picture through a reconnect this short
 
-# eufyMake Studio Device-tab palette, sampled from the running app.
-CARD = "#292a2d"
-APP_BG = "#18191b"
-DIVIDER = "#3e3f42"
-VIDEO_BG = "#000000"
-TEXT = "#e6e7e9"
-TEXT_DIM = "#9ea1a6"
-GREEN = "#62d361"
-GREEN_BTN = "#263229"
-GREEN_BTN_HOVER = "#2e3d31"
-SELECTED = "#354138"
-RED = "#e05a5a"
-AMBER = "#e0a84a"
 
 # The panel's own sheet beats the app-wide DARK_QSS. Within it, equal
 # specificity resolves by order: the catch-all QWidget rule comes first so
@@ -103,6 +115,10 @@ QPushButton#danger {{ background: #3a2626; color: {RED}; }}
 QPushButton#danger:hover {{ background: #4a2c2c; }}
 QPushButton#danger:checked {{ background: {RED}; color: #2a0f0f; }}
 QPushButton#danger:disabled {{ background: #2f3033; color: #63666b; }}
+QPushButton#plain {{ background: #34363a; color: {TEXT}; }}
+QPushButton#plain:hover {{ background: #3d4044; }}
+QPushButton#plain:checked {{ background: {SELECTED}; color: {GREEN}; }}
+QPushButton#plain:disabled {{ background: #2f3033; color: #63666b; }}
 
 QCheckBox {{ spacing: 6px; }}
 QCheckBox::indicator {{
@@ -118,47 +134,6 @@ QComboBox {{
 QMenu {{ background: {CARD}; color: {TEXT}; border: 1px solid {DIVIDER}; }}
 QMenu::item:selected {{ background: {SELECTED}; }}
 """
-
-# Segoe Fluent Icons (Windows 11) / Segoe MDL2 Assets (Windows 10) glyphs.
-ICON_CAMERA = ""
-ICON_RECORD = ""
-ICON_TIMER = ""
-ICON_FOLDER = ""
-ICON_FULLSCREEN = ""
-ICON_WINDOW = ""
-ICON_SETTINGS = ""
-
-_icon_family: str | None = None
-
-
-def _glyph_font_family() -> str:
-    global _icon_family
-    if _icon_family is None:
-        families = set(QFontDatabase.families())
-        _icon_family = next(
-            (f for f in ("Segoe Fluent Icons", "Segoe MDL2 Assets") if f in families), ""
-        )
-    return _icon_family
-
-
-def glyph_icon(glyph: str, color: str = TEXT, size: int = 16) -> QIcon:
-    """Render an icon-font glyph into a QIcon (empty icon if no icon font)."""
-    family = _glyph_font_family()
-    if not family:
-        return QIcon()
-    ratio = 2  # render at 2x so it stays crisp at 125-200% scaling
-    pix = QPixmap(size * ratio, size * ratio)
-    pix.setDevicePixelRatio(ratio)
-    pix.fill(Qt.transparent)
-    painter = QPainter(pix)
-    font = QFont(family)
-    font.setPixelSize(size - 2)
-    painter.setFont(font)
-    painter.setPen(QColor(color))
-    painter.drawText(QRect(0, 0, size, size), Qt.AlignCenter, glyph)
-    painter.end()
-    return QIcon(pix)
-
 
 def _chip(text: str = "") -> QLabel:
     label = QLabel(text)
@@ -254,6 +229,7 @@ class MonitorPanel(_Panel):
         self.snapshot_btn = _tool(ICON_CAMERA, "Snapshot", "Save a PNG of the current frame")
         self.record_btn = _tool(ICON_RECORD, "Record", "Record an MP4 clip", checkable=True)
         self.timelapse_btn = _tool(ICON_TIMER, "Timelapse", "Capture a print timelapse", checkable=True)
+        self.adjust_btn = _tool(ICON_ADJUST, "Adjust", "Brightness, exposure, zoom, rotate…")
         self.folder_btn = _tool(ICON_FOLDER, "", "Open snapshot / video folder")
         self.folder_btn.setPopupMode(QToolButton.InstantPopup)
         self.status = QLabel()
@@ -262,7 +238,7 @@ class MonitorPanel(_Panel):
         self.fullscreen_btn = _tool(ICON_FULLSCREEN, "", "Fullscreen (Esc to exit)")
         self.window_btn = _tool(ICON_WINDOW, "", "Open the full Wyze Print Monitor window")
         self.settings_btn = _tool(ICON_SETTINGS, "", "Settings")
-        for widget in (self.snapshot_btn, self.record_btn, self.timelapse_btn, self.folder_btn):
+        for widget in (self.snapshot_btn, self.record_btn, self.timelapse_btn, self.adjust_btn, self.folder_btn):
             tools.addWidget(widget)
         tools.addSpacing(8)
         tools.addWidget(self.status, 1)
@@ -350,6 +326,31 @@ class CameraPanel(_Panel):
         return label
 
 
+class AdjustPopup(QWidget):
+    """The picture adjustments, popping up over the docked Monitor."""
+
+    def __init__(self, main) -> None:
+        super().__init__(None, Qt.Popup | Qt.FramelessWindowHint)
+        self.setObjectName("dockPanel")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(DOCK_QSS + f"QWidget#dockPanel {{ border: 1px solid {DIVIDER}; }}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.panel = ImageAdjustPanel(main)
+        layout.addWidget(self.panel)
+        self.setFixedWidth(340)
+
+    def show_above(self, anchor: QWidget) -> None:
+        """Open just above ``anchor`` (a toolbar button), kept on screen."""
+        self.adjustSize()
+        pos = anchor.mapToGlobal(QPoint(0, 0)) - QPoint(0, self.height() + 6)
+        screen = anchor.screen().availableGeometry()
+        pos.setX(min(max(pos.x(), screen.left()), screen.right() - self.width()))
+        pos.setY(max(pos.y(), screen.top()))
+        self.move(pos)
+        self.show()
+
+
 def _mirror_button(dock: QAbstractButton, main: QAbstractButton) -> None:
     """Clicking the dock button clicks the main-window one (same handlers)."""
     def forward() -> None:
@@ -395,6 +396,7 @@ class StudioDock(QObject):
         self._placed: dict[int, tuple] = {}
         self._status_until = 0.0
         self._not_live_since: float | None = None
+        self._adjust_popup: AdjustPopup | None = None
 
         main.status_message.connect(self._on_status)
         QApplication.instance().aboutToQuit.connect(self.detach)
@@ -540,6 +542,10 @@ class StudioDock(QObject):
         self._foreign.clear()
         self._placed.clear()
         self.monitor = self.camera = None
+        if self._adjust_popup is not None:
+            self._adjust_popup.hide()
+            self._adjust_popup.deleteLater()
+            self._adjust_popup = None
 
     # ------------------------------------------------------------------ wiring
     def _wire(self) -> None:
@@ -550,6 +556,7 @@ class StudioDock(QObject):
         mon.fullscreen_btn.clicked.connect(m._toggle_fullscreen)
         mon.window_btn.clicked.connect(m.show_window)
         mon.settings_btn.clicked.connect(m._open_settings)
+        mon.adjust_btn.clicked.connect(self._show_adjust)
         cam.settings_btn.clicked.connect(m._open_settings)
         folders = QMenu(mon.folder_btn)
         folders.addAction("Open snapshot folder", lambda: m._open_folder(m.settings.resolved_snapshot_dir()))
@@ -569,6 +576,13 @@ class StudioDock(QObject):
         ):
             _mirror_button(dock_btn, main_btn)
         cam.camera_combo.activated.connect(m.camera_list.setCurrentRow)
+
+    def _show_adjust(self) -> None:
+        if self.monitor is None:
+            return
+        if self._adjust_popup is None:
+            self._adjust_popup = AdjustPopup(self.main)
+        self._adjust_popup.show_above(self.monitor.adjust_btn)
 
     # ------------------------------------------------------------------ mirroring
     def _on_status(self, message: str, timeout: int) -> None:

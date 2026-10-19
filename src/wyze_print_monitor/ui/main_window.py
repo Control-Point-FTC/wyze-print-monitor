@@ -8,7 +8,7 @@ import time
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,24 +16,25 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSplitter,
-    QTabBar,
+    QSizePolicy,
+    QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..async_runner import AsyncRunner
+from ..adjust import ImageAdjustments
 from ..capture import ClipRecorder, StreamReader, snapshot_path
 from ..config import (
     SECRET_API_KEY,
@@ -48,7 +49,11 @@ from ..config import (
 )
 from ..timelapse import TimelapseCollector, compile_timelapse
 from ..wyze_control import CameraInfo, CameraState, WyzeController
+from .adjust_panel import ImageAdjustPanel
+from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, glyph_icon
 from .settings_dialog import SettingsDialog, forget_secrets
+
+RIGHT_COLUMN_WIDTH = 380
 
 
 class TimelapseCompileWorker(QThread):
@@ -75,6 +80,8 @@ class MainWindow(QMainWindow):
     # Every status-bar message, re-broadcast for views outside this window
     # (the panels docked inside eufyMake Studio).
     status_message = Signal(str, int)
+    # The picture adjustments changed (from any panel); views re-sync.
+    adjustments_changed = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -107,6 +114,13 @@ class MainWindow(QMainWindow):
         self._rec_start: float | None = None
         self._stream_state = "idle"
 
+        self.adjustments = ImageAdjustments.from_dict(self.settings.image_adjustments)
+        # Slider drags fire many changes a second: save once they settle.
+        self._save_adjust_timer = QTimer(self)
+        self._save_adjust_timer.setSingleShot(True)
+        self._save_adjust_timer.setInterval(600)
+        self._save_adjust_timer.timeout.connect(lambda: save_settings(self.settings))
+
         self._build_ui()
         self._apply_always_on_top()
         if self.settings.rtsp_url:
@@ -115,119 +129,163 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ UI build
     def _build_ui(self) -> None:
+        """Studio Device-tab layout: cards on a dark background.
+
+        Left: My Camera list. Center: Monitor (picture + capture toolbar)
+        and a Session strip. Right: Control readouts, then Camera / Image
+        tabs. Side columns have fixed widths and the center takes the rest,
+        so nothing overlaps or leaves dead gaps when the window resizes.
+        """
         self._build_menus()
 
-        # View tab bar, eufyMake "Slice | Device" style (single Monitor view).
-        self.tab_bar = QTabBar()
-        self.tab_bar.setExpanding(False)
-        self.tab_bar.addTab("Monitor")
-
         main = QWidget()
-        main_layout = QVBoxLayout(main)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        main_layout.addWidget(self.tab_bar)
-
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_sidebar())
-        splitter.addWidget(self._build_monitor_pane())
-        splitter.addWidget(self._build_right_pane())
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        main_layout.addWidget(splitter, 1)
-
+        row = QHBoxLayout(main)
+        row.setContentsMargins(10, 10, 10, 10)
+        row.setSpacing(10)
+        row.addWidget(self._build_sidebar())
+        row.addLayout(self._build_center(), 1)
+        row.addLayout(self._build_right_column())
         self.setCentralWidget(main)
         self._status("Ready")
         self._set_controls_enabled(False)
 
+    @staticmethod
+    def _card(title: str) -> tuple[QFrame, QHBoxLayout, QVBoxLayout]:
+        """A Studio-style card: header bar (title + right-side slot) over a body."""
+        card = QFrame()
+        card.setObjectName("card")
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        header = QWidget()
+        header.setObjectName("cardHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header.setFixedHeight(36)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(12, 0, 10, 0)
+        header_row.setSpacing(8)
+        label = QLabel(title)
+        label.setObjectName("cardTitle")
+        header_row.addWidget(label)
+        header_row.addStretch(1)
+        outer.addWidget(header)
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        outer.addLayout(body, 1)
+        return card, header_row, body
+
+    @staticmethod
+    def _section_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("section")
+        return label
+
     def _build_sidebar(self) -> QWidget:
-        """Left device list, eufyMake "My Printer" style. Selects the camera."""
-        side = QWidget()
-        side.setFixedWidth(210)
-        layout = QVBoxLayout(side)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        title = QLabel("My Camera")
-        title.setObjectName("paneHeader")
-        layout.addWidget(title)
-
+        """Left device list, Studio "My Printer" style. Selects the camera."""
+        card, _header, body = self._card("My Camera")
+        card.setFixedWidth(220)
         self.camera_list = QListWidget()
         self.camera_list.setObjectName("cameraList")
         self.camera_list.currentRowChanged.connect(self._on_sidebar_camera_selected)
-        layout.addWidget(self.camera_list, 1)
-        return side
+        body.addWidget(self.camera_list)
+        return card
 
-    def _build_monitor_pane(self) -> QWidget:
-        """Center: Monitor video panel + Session stats, eufyMake style."""
-        monitor = QWidget()
-        layout = QVBoxLayout(monitor)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+    def _tool_button(self, glyph: str, text: str, tip: str, checkable: bool = False) -> QToolButton:
+        button = QToolButton()
+        button.setIcon(glyph_icon(glyph))
+        button.setIconSize(QSize(16, 16))
+        button.setText(text)
+        button.setToolTip(tip)
+        button.setCheckable(checkable)
+        button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if text else Qt.ToolButtonIconOnly)
+        button.setCursor(Qt.PointingHandCursor)
+        return button
 
-        header = QLabel("Monitor")
-        header.setObjectName("paneHeader")
-        layout.addWidget(header)
+    def _build_center(self) -> QVBoxLayout:
+        column = QVBoxLayout()
+        column.setSpacing(10)
 
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.setSpacing(0)
+        # Monitor card: status in the header, picture, capture toolbar.
+        monitor, header, body = self._card("Monitor")
+        self.stream_info_label = QLabel("")
+        self.stream_info_label.setObjectName("dim")
+        self.status_pill = QLabel("Idle")
+        self.status_pill.setObjectName("statusPill")
+        self.status_pill.setFixedHeight(20)
+        self._set_pill("idle")
+        header.addWidget(self.stream_info_label)
+        header.addWidget(self.status_pill)
 
         self.video_label = QLabel("No signal — set your RTSP URL in Settings.")
         self.video_label.setObjectName("videoLabel")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(480, 270)
-        body_layout.addWidget(self.video_label, 1)
+        self.video_label.setMinimumSize(320, 180)
+        # Ignore the pixmap's size hint so a big frame never stretches the
+        # layout; frames are scaled to whatever room the label gets.
+        self.video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        body.addWidget(self.video_label, 1)
 
-        # Thin player bar under the picture: status pill left, info right.
-        player_bar = QWidget()
-        player_bar.setObjectName("playerBar")
-        bar = QHBoxLayout(player_bar)
-        bar.setContentsMargins(8, 4, 8, 4)
-        self.status_pill = QLabel("Idle")
-        self.status_pill.setObjectName("statusPill")
-        self._set_pill("idle")
-        self.stream_info_label = QLabel("")
-        self.stream_info_label.setStyleSheet("color: #9a9ea5;")
-        self.stream_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        bar.addWidget(self.status_pill)
-        bar.addWidget(self.stream_info_label, 1)
-        body_layout.addWidget(player_bar)
-        layout.addWidget(body, 1)
+        toolbar = QWidget()
+        toolbar.setObjectName("toolbar")
+        toolbar.setAttribute(Qt.WA_StyledBackground, True)
+        toolbar.setFixedHeight(40)
+        tools = QHBoxLayout(toolbar)
+        tools.setContentsMargins(8, 4, 8, 4)
+        tools.setSpacing(4)
+        self.snapshot_btn = self._tool_button(ICON_CAMERA, "Snapshot", "Save a PNG of the current frame")
+        self.snapshot_btn.clicked.connect(self._on_snapshot)
+        self.record_btn = self._tool_button(ICON_RECORD, "Record", "Record an MP4 clip", checkable=True)
+        self.record_btn.clicked.connect(self._on_record_toggled)
+        self.timelapse_btn = self._tool_button(ICON_TIMER, "Timelapse", "Capture a print timelapse", checkable=True)
+        self.timelapse_btn.clicked.connect(self._on_timelapse_toggled)
+        folder_btn = self._tool_button(ICON_FOLDER, "", "Open snapshot / video folder")
+        folder_btn.setPopupMode(QToolButton.InstantPopup)
+        folders = QMenu(folder_btn)
+        folders.addAction("Open snapshot folder", lambda: self._open_folder(self.settings.resolved_snapshot_dir()))
+        folders.addAction("Open video folder", lambda: self._open_folder(self.settings.resolved_video_dir()))
+        folder_btn.setMenu(folders)
+        self.fullscreen_btn = self._tool_button(ICON_FULLSCREEN, "", "Fullscreen (Esc to exit)")
+        self.fullscreen_btn.clicked.connect(self._toggle_fullscreen)
+        for widget in (self.snapshot_btn, self.record_btn, self.timelapse_btn, folder_btn):
+            tools.addWidget(widget)
+        tools.addStretch(1)
+        tools.addWidget(self.fullscreen_btn)
+        body.addWidget(toolbar)
+        column.addWidget(monitor, 1)
 
-        # Session panel, eufyMake "Progress" style: live capture stats.
-        session_header = QLabel("Session")
-        session_header.setObjectName("paneHeader")
-        layout.addWidget(session_header)
-        session = QWidget()
-        form = QFormLayout(session)
-        form.setContentsMargins(12, 8, 12, 8)
+        # Session strip, Studio "Progress" style: what's being captured.
+        session, _header, session_body = self._card("Session")
+        stats = QHBoxLayout()
+        stats.setContentsMargins(12, 10, 12, 12)
+        stats.setSpacing(28)
         self.session_stream = QLabel("Idle")
-        self.session_stream.setObjectName("sessionValue")
         self.session_rec = QLabel("—")
-        self.session_rec.setObjectName("sessionValue")
         self.session_timelapse = QLabel("—")
-        self.session_timelapse.setObjectName("sessionValue")
-        stream_cap = QLabel("Stream")
-        stream_cap.setObjectName("sessionCaption")
-        rec_cap = QLabel("Recording")
-        rec_cap.setObjectName("sessionCaption")
-        tl_cap = QLabel("Timelapse")
-        tl_cap.setObjectName("sessionCaption")
-        form.addRow(stream_cap, self.session_stream)
-        form.addRow(rec_cap, self.session_rec)
-        form.addRow(tl_cap, self.session_timelapse)
-        layout.addWidget(session)
-        return monitor
+        for caption, value in (
+            ("Stream", self.session_stream),
+            ("Recording", self.session_rec),
+            ("Timelapse", self.session_timelapse),
+        ):
+            value.setObjectName("sessionValue")
+            cap = QLabel(caption)
+            cap.setObjectName("sessionCaption")
+            pair = QHBoxLayout()
+            pair.setSpacing(8)
+            pair.addWidget(cap)
+            pair.addWidget(value)
+            stats.addLayout(pair)
+        stats.addStretch(1)
+        session_body.addLayout(stats)
+        column.addWidget(session)
+        return column
 
-    def _stat_card(self, caption: str) -> tuple[QLabel, QLabel, QFrame]:
-        """Big readout card, eufyMake temperature-card style."""
-        card = QFrame()
-        card.setObjectName("statCard")
-        vbox = QVBoxLayout(card)
-        vbox.setContentsMargins(12, 10, 12, 10)
+    def _stat_card(self, caption: str) -> tuple[QLabel, QLabel, QWidget]:
+        """Big readout, Studio temperature style."""
+        box = QWidget()
+        vbox = QVBoxLayout(box)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(0)
         value = QLabel("—")
         value.setObjectName("statValue")
         value.setAlignment(Qt.AlignCenter)
@@ -236,80 +294,126 @@ class MainWindow(QMainWindow):
         cap.setAlignment(Qt.AlignCenter)
         vbox.addWidget(value)
         vbox.addWidget(cap)
-        return value, cap, card
+        return value, cap, box
 
-    def _build_right_pane(self) -> QWidget:
-        """Right column: Control panel, then the Camera panel where eufyMake
-        puts its "Others" section."""
-        right = QWidget()
-        right.setFixedWidth(340)
-        layout = QVBoxLayout(right)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+    def _build_right_column(self) -> QVBoxLayout:
+        column = QVBoxLayout()
+        column.setSpacing(10)
 
-        control_header = QLabel("Control")
-        control_header.setObjectName("paneHeader")
-        layout.addWidget(control_header)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        panel = QWidget()
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
-        panel_layout.setSpacing(0)
-
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(8, 8, 8, 8)
-
-        # Big readout cards, eufyMake temperature-card style.
+        control, _header, body = self._card("Control")
+        control.setFixedWidth(RIGHT_COLUMN_WIDTH)
         cards = QHBoxLayout()
-        self.stat_stream_value, self.stat_stream_cap, stream_card = self._stat_card("Stream")
+        cards.setContentsMargins(8, 14, 8, 14)
+        self.stat_stream_value, self.stat_stream_cap, stream_card = self._stat_card("State")
         self.stat_video_value, self.stat_video_cap, video_card = self._stat_card("Video")
-        self.stat_stream_cap.setText("State")
         cards.addWidget(stream_card)
         cards.addWidget(video_card)
-        content_layout.addLayout(cards)
+        body.addLayout(cards)
+        column.addWidget(control)
 
-        # Capture actions, 2x2 grid.
-        cap_grid = QGridLayout()
-        cap_grid.setSpacing(8)
-        self.snapshot_btn = QPushButton("Snapshot")
-        self.snapshot_btn.clicked.connect(self._on_snapshot)
-        self.record_btn = QPushButton("Record")
-        self.record_btn.setCheckable(True)
-        self.record_btn.clicked.connect(self._on_record_toggled)
-        self.timelapse_btn = QPushButton("Timelapse")
-        self.timelapse_btn.setCheckable(True)
-        self.timelapse_btn.clicked.connect(self._on_timelapse_toggled)
-        self.fullscreen_btn = QPushButton("Fullscreen")
-        self.fullscreen_btn.clicked.connect(self._toggle_fullscreen)
-        cap_grid.addWidget(self.snapshot_btn, 0, 0)
-        cap_grid.addWidget(self.record_btn, 0, 1)
-        cap_grid.addWidget(self.timelapse_btn, 1, 0)
-        cap_grid.addWidget(self.fullscreen_btn, 1, 1)
-        content_layout.addLayout(cap_grid)
-        panel_layout.addWidget(content)
+        # Camera / Image tabs: the controls get the full height instead of
+        # one long column that overflows.
+        tabs_card = QFrame()
+        tabs_card.setObjectName("card")
+        tabs_card.setFixedWidth(RIGHT_COLUMN_WIDTH)
+        tabs_layout = QVBoxLayout(tabs_card)
+        tabs_layout.setContentsMargins(0, 0, 0, 0)
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setDocumentMode(True)
+        self.side_tabs.addTab(self._scrollable(self._camera_tab()), "Camera")
+        self.side_tabs.addTab(self._scrollable(ImageAdjustPanel(self)), "Image")
+        tabs_layout.addWidget(self.side_tabs)
+        column.addWidget(tabs_card, 1)
+        return column
 
-        # Camera device controls, in eufyMake's "Others" position.
-        camera_header = QLabel("Camera")
-        camera_header.setObjectName("paneHeader")
-        panel_layout.addWidget(camera_header)
+    @staticmethod
+    def _scrollable(widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(widget)
+        return scroll
 
-        content2 = QWidget()
-        content2_layout = QVBoxLayout(content2)
-        content2_layout.setContentsMargins(8, 8, 8, 8)
-        content2_layout.addWidget(self._connection_group())
-        content2_layout.addWidget(self._camera_group())
-        content2_layout.addWidget(self._siren_spotlight_group())
-        content2_layout.addWidget(self._detection_group())
-        content2_layout.addWidget(self._device_info_group())
-        content2_layout.addStretch(1)
-        panel_layout.addWidget(content2)
+    def _camera_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(6)
 
-        scroll.setWidget(panel)
-        layout.addWidget(scroll, 1)
-        return right
+        # Connection (camera selection lives in the left list).
+        layout.addWidget(self._section_label("CONNECTION"))
+        self.conn_label = QLabel("Not connected to Wyze.")
+        self.conn_label.setObjectName("dim")
+        self.conn_label.setWordWrap(True)
+        layout.addWidget(self.conn_label)
+        row = QHBoxLayout()
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.setObjectName("accentButton")
+        self.connect_btn.clicked.connect(self._on_connect)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self._on_refresh_cameras)
+        row.addWidget(self.connect_btn)
+        row.addWidget(self.refresh_btn)
+        layout.addLayout(row)
+
+        layout.addSpacing(6)
+        layout.addWidget(self._section_label("POWER"))
+        row = QHBoxLayout()
+        self.power_on_btn = QPushButton("Turn on")
+        self.power_off_btn = QPushButton("Turn off")
+        self.restart_btn = QPushButton("Restart")
+        self.power_on_btn.clicked.connect(lambda: self._cam_action("Power on", self.controller.set_power, True))
+        self.power_off_btn.clicked.connect(lambda: self._cam_action("Power off", self.controller.set_power, False))
+        self.restart_btn.clicked.connect(self._on_restart)
+        for button in (self.power_on_btn, self.power_off_btn, self.restart_btn):
+            row.addWidget(button)
+        layout.addLayout(row)
+
+        layout.addSpacing(6)
+        layout.addWidget(self._section_label("SIREN & SPOTLIGHT"))
+        row = QHBoxLayout()
+        self.siren_btn = QPushButton("Siren: off")
+        self.siren_btn.setObjectName("danger")
+        self.siren_btn.setCheckable(True)
+        self.siren_btn.clicked.connect(self._on_siren_toggled)
+        self.spotlight_btn = QPushButton("Spotlight: off")
+        self.spotlight_btn.setCheckable(True)
+        self.spotlight_btn.clicked.connect(self._on_spotlight_toggled)
+        row.addWidget(self.siren_btn)
+        row.addWidget(self.spotlight_btn)
+        layout.addLayout(row)
+
+        layout.addSpacing(6)
+        layout.addWidget(self._section_label("DETECTION"))
+        self.motion_check = QCheckBox("Motion detection")
+        self.motion_check.toggled.connect(self._on_motion_changed)
+        self.notify_check = QCheckBox("Push notifications")
+        self.notify_check.toggled.connect(self._on_notify_changed)
+        layout.addWidget(self.motion_check)
+        layout.addWidget(self.notify_check)
+
+        layout.addSpacing(6)
+        layout.addWidget(self._section_label("DEVICE INFO"))
+        info = QFormLayout()
+        info.setHorizontalSpacing(16)
+        info.setVerticalSpacing(4)
+        self.info_model = QLabel("—")
+        self.info_status = QLabel("—")
+        self.info_firmware = QLabel("—")
+        self.info_ip = QLabel("—")
+        for caption, value in (
+            ("Model", self.info_model),
+            ("Status", self.info_status),
+            ("Firmware", self.info_firmware),
+            ("IP", self.info_ip),
+        ):
+            cap = QLabel(caption)
+            cap.setObjectName("dim")
+            value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            info.addRow(cap, value)
+        layout.addLayout(info)
+        layout.addStretch(1)
+        return tab
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -362,82 +466,6 @@ class MainWindow(QMainWindow):
             "for 3D-print monitoring.\nSecrets live in the OS keyring, never on disk.",
         )
 
-    def _connection_group(self) -> QGroupBox:
-        # Camera selection lives in the left sidebar; this group only connects.
-        box = QGroupBox("Connection")
-        layout = QVBoxLayout(box)
-        row = QHBoxLayout()
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.setObjectName("accentButton")
-        self.connect_btn.clicked.connect(self._on_connect)
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.clicked.connect(self._on_refresh_cameras)
-        row.addWidget(self.connect_btn)
-        row.addWidget(self.refresh_btn)
-        layout.addLayout(row)
-        self.conn_label = QLabel("Not connected to Wyze.")
-        self.conn_label.setWordWrap(True)
-        self.conn_label.setStyleSheet("color: #9a9ea5;")
-        layout.addWidget(self.conn_label)
-        return box
-
-    def _camera_group(self) -> QGroupBox:
-        box = QGroupBox("Camera")
-        layout = QVBoxLayout(box)
-        row = QHBoxLayout()
-        self.power_on_btn = QPushButton("Turn on")
-        self.power_off_btn = QPushButton("Turn off")
-        self.power_on_btn.clicked.connect(lambda: self._cam_action("Power on", self.controller.set_power, True))
-        self.power_off_btn.clicked.connect(lambda: self._cam_action("Power off", self.controller.set_power, False))
-        row.addWidget(self.power_on_btn)
-        row.addWidget(self.power_off_btn)
-        layout.addLayout(row)
-        self.restart_btn = QPushButton("Restart camera")
-        self.restart_btn.clicked.connect(self._on_restart)
-        layout.addWidget(self.restart_btn)
-        return box
-
-    def _siren_spotlight_group(self) -> QGroupBox:
-        box = QGroupBox("Siren && spotlight")
-        layout = QVBoxLayout(box)
-        self.siren_btn = QPushButton("Siren: off")
-        self.siren_btn.setCheckable(True)
-        self.siren_btn.clicked.connect(self._on_siren_toggled)
-        self.spotlight_btn = QPushButton("Spotlight: off")
-        self.spotlight_btn.setCheckable(True)
-        self.spotlight_btn.clicked.connect(self._on_spotlight_toggled)
-        layout.addWidget(self.siren_btn)
-        layout.addWidget(self.spotlight_btn)
-        hint = QLabel("Siren and spotlight toggle on the camera itself.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #9a9ea5;")
-        layout.addWidget(hint)
-        return box
-
-    def _detection_group(self) -> QGroupBox:
-        box = QGroupBox("Detection")
-        layout = QVBoxLayout(box)
-        self.motion_check = QCheckBox("Motion detection")
-        self.motion_check.toggled.connect(self._on_motion_changed)
-        self.notify_check = QCheckBox("Push notifications")
-        self.notify_check.toggled.connect(self._on_notify_changed)
-        layout.addWidget(self.motion_check)
-        layout.addWidget(self.notify_check)
-        return box
-
-    def _device_info_group(self) -> QGroupBox:
-        box = QGroupBox("Device info")
-        layout = QFormLayout(box)
-        self.info_model = QLabel("—")
-        self.info_status = QLabel("—")
-        self.info_firmware = QLabel("—")
-        self.info_ip = QLabel("—")
-        layout.addRow("Model", self.info_model)
-        layout.addRow("Status", self.info_status)
-        layout.addRow("Firmware", self.info_firmware)
-        layout.addRow("IP", self.info_ip)
-        return box
-
     # ------------------------------------------------------------------ helpers
     def _set_pill(self, state: str) -> None:
         colors = {
@@ -474,6 +502,7 @@ class MainWindow(QMainWindow):
     def _start_stream(self) -> None:
         self._stop_stream()
         self._reader = StreamReader(effective_rtsp_url(self.settings), self)
+        self._reader.adjustments = self.adjustments
         self._reader.frame_ready.connect(self._on_frame)
         self._reader.state_changed.connect(self._on_stream_state)
         self._reader.start()
@@ -727,6 +756,17 @@ class MainWindow(QMainWindow):
         self._shutdown()
         self.hide()
         QApplication.exit(0)
+
+    def set_adjustments(self, adjustments: ImageAdjustments) -> None:
+        """Apply new picture adjustments to the live stream and remember them."""
+        if adjustments == self.adjustments:
+            return
+        self.adjustments = adjustments
+        if self._reader is not None:
+            self._reader.adjustments = adjustments  # picked up on the next frame
+        self.settings.image_adjustments = adjustments.to_dict()
+        self._save_adjust_timer.start()
+        self.adjustments_changed.emit(adjustments)
 
     def _status(self, message: str, timeout: int = 0) -> None:
         self.statusBar().showMessage(message, timeout)

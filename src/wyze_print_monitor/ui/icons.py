@@ -1,0 +1,53 @@
+"""Icons drawn from Windows' built-in icon font (no image assets needed).
+
+Segoe Fluent Icons ships with Windows 11, Segoe MDL2 Assets with Windows 10;
+elsewhere the icons are simply empty and buttons fall back to their text.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
+
+ICON_CAMERA = chr(0xE722)
+ICON_RECORD = chr(0xE7C8)
+ICON_TIMER = chr(0xE916)
+ICON_FOLDER = chr(0xE838)
+ICON_FULLSCREEN = chr(0xE740)
+ICON_WINDOW = chr(0xE8A7)
+ICON_SETTINGS = chr(0xE713)
+ICON_ADJUST = chr(0xE706)  # brightness
+ICON_ROTATE_LEFT = chr(0xE7AD)
+ICON_ROTATE_RIGHT = chr(0xE7AD)  # same glyph, mirrored when drawn
+ICON_RESET = chr(0xE72C)  # refresh arrow
+
+_family: str | None = None
+
+
+def icon_font_family() -> str:
+    global _family
+    if _family is None:
+        families = set(QFontDatabase.families())
+        _family = next((f for f in ("Segoe Fluent Icons", "Segoe MDL2 Assets") if f in families), "")
+    return _family
+
+
+def glyph_icon(glyph: str, color: str = "#e6e7e9", size: int = 16, mirror: bool = False) -> QIcon:
+    """Render an icon-font glyph into a QIcon (empty icon if no icon font)."""
+    family = icon_font_family()
+    if not family:
+        return QIcon()
+    ratio = 2  # render at 2x so it stays crisp at 125-200% scaling
+    pix = QPixmap(size * ratio, size * ratio)
+    pix.setDevicePixelRatio(ratio)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    if mirror:
+        painter.translate(size, 0)
+        painter.scale(-1, 1)
+    font = QFont(family)
+    font.setPixelSize(size - 2)
+    painter.setFont(font)
+    painter.setPen(QColor(color))
+    painter.drawText(QRect(0, 0, size, size), Qt.AlignCenter, glyph)
+    painter.end()
+    return QIcon(pix)
