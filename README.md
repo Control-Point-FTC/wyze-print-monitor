@@ -29,6 +29,38 @@ alerts you to failed prints (and pauses them when it's sure).
 
 ![The Wyze feed and controls docked in eufyMake Studio](docs/screenshots/studio-dock.png)
 
+## Features
+
+- **Live view inside eufyMake Studio:** the Wyze feed and camera controls
+  sit right in the Device tab, for the printer that has the camera. You can
+  also use a full window or fullscreen.
+- **Smooth, low-delay video:** Auto quality steps down from 1080p to 720p to
+  360p when your PC is busy or the network is slow, then steps back up later.
+  You can also pick a quality by hand.
+- **Camera controls:** power, restart, siren, spotlight, motion detection and
+  notifications, through your Wyze account.
+- **Snapshots, recordings and print timelapses**, with recent captures one
+  click away.
+- **Picture adjustments**, shown live beside the video:
+  - **Auto lighting**, which keeps the picture well exposed as the room's
+    light changes;
+  - brightness, contrast, exposure, gamma, saturation, warmth and sharpness;
+  - rotate, flip, and digital zoom with drag-to-pan.
+- **AI print watch** (local, free, optional), using Obico's open
+  failure-detection model on your PC:
+  - **alerts** you to spaghetti, blobs and knocked-loose parts with a banner,
+    a Windows notification, a beep and an outlined snapshot;
+  - **auto-pauses** through Studio only when it's very sure;
+  - **never stops** a print without asking you.
+- **Unusual-sound alerts:** it learns how your print normally sounds and
+  flags grinding, clicking or a loud bang.
+- **Light on your PC:** about 1% CPU for the AI watch, and it only runs while
+  a print is running.
+- **Easy install and updates:** a Windows installer, a Start-menu entry, and
+  in-app updates that keep your settings.
+- **Private:** passwords stay in Windows Credential Manager. Video and AI
+  never leave your network.
+
 ## Install (Windows 10 / 11)
 
 1. Download **`WyzePrintMonitor-<version>-setup.exe`** from the
