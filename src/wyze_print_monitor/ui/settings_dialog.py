@@ -186,7 +186,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.updates_check)
         form.addRow("Printer with camera", self.dock_row_spin)
 
-        tabs = QTabWidget()
+        tabs = self._tabs = QTabWidget()
         general = QWidget()
         general.setLayout(form)
         tabs.addTab(general, "General")
@@ -197,6 +197,9 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def show_watch_tab(self) -> None:
+        self._tabs.setCurrentIndex(1)
 
     # ------------------------------------------------------------------ print watch
     def _build_watch_tab(self, settings: Settings) -> QWidget:

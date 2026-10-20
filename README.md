@@ -186,8 +186,11 @@ still fine-tune on top.
 
 ### Print watch (AI failure detection)
 
-Settings → **Print watch** → *Download model* (≈200 MB, once), then turn on
-*Watch prints for failures*. It runs entirely on your PC — no account, no
+Tick **Download the AI print-failure model** in the installer (≈200 MB, once),
+or later in Settings → **Print watch** → *Download model*. Turn it on or off
+any time with the **Print watch (AI)** tile in the camera panel, the
+*Settings* menu, or Settings → Print watch (which also has auto-pause,
+sensitivity and sound alerts). It runs entirely on your PC — no account, no
 cloud, no subscription — using [Obico](https://www.obico.io)'s open
 failure-detection model.
 

@@ -50,6 +50,7 @@ from ..captures import Capture, describe_age, recent_captures, thumbnail
 from .icons import (
     ICON_ADJUST,
     ICON_BELL,
+    ICON_WATCH,
     ICON_CAMERA,
     ICON_CLOSE,
     ICON_FIT,
@@ -817,6 +818,10 @@ class CameraPanel(QWidget):
         self.notify_tile = ToggleTile(ICON_BELL, "Alerts")
         for i, tile in enumerate((self.siren_tile, self.spotlight_tile, self.motion_tile, self.notify_tile)):
             tiles.addWidget(tile, i // 2, i % 2)
+        # Print watch is the app's own switch (not a camera setting): full width.
+        self.watch_tile = ToggleTile(ICON_WATCH, "Print watch (AI)")
+        self.watch_tile.setToolTip("Watch prints for failures. Settings > Print watch for options.")
+        tiles.addWidget(self.watch_tile, 2, 0, 1, 2)
         layout.addLayout(tiles)
 
         # --- power

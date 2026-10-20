@@ -24,6 +24,7 @@ ICON_SIREN = chr(0xE789)  # megaphone
 ICON_LIGHT = chr(0xEA80)  # lightbulb
 ICON_MOTION = chr(0xE805)  # walking figure
 ICON_BELL = chr(0xEA8F)
+ICON_WATCH = chr(0xE890)  # eye
 ICON_FIT = chr(0xE9A6)
 ICON_CLOSE = chr(0xE711)
 ICON_VIDEO = chr(0xE714)

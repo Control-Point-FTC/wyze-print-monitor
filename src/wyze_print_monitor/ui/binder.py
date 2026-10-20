@@ -171,6 +171,7 @@ class PanelBinder(QObject):
         ):
             _forward(view_button, control)
         c.camera_combo.activated.connect(m.camera_list.setCurrentRow)
+        c.watch_tile.clicked.connect(lambda: m.set_print_watch_enabled(not m.settings.ai_watch))
         for name, (slider, _value) in c.quick_sliders.items():
             slider.valueChanged.connect(lambda value, n=name: self._on_quick_slider(n, value))
 
@@ -406,6 +407,13 @@ class PanelBinder(QObject):
         ):
             _mirror(tile, control)
             tile.set_state(_toggle_state(control) if control.isEnabled() else "—")
+        watch_on = bool(m.settings.ai_watch) and m.print_watch.model_ready()
+        if c.watch_tile.isChecked() != watch_on:
+            c.watch_tile.setChecked(watch_on)
+        if watch_on:
+            c.watch_tile.set_state(m.print_watch.status_text().split(": ", 1)[-1].capitalize() or "On")
+        else:
+            c.watch_tile.set_state("Off" if m.print_watch.model_ready() else "Off · model not downloaded")
         for button, control in (
             (c.power_on_btn, m.power_on_btn),
             (c.power_off_btn, m.power_off_btn),

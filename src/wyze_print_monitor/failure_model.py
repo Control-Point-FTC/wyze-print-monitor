@@ -18,6 +18,9 @@ MODEL_URL = "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.
 MODEL_SHA256 = "0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa"
 MODEL_SIZE = 202_223_918
 MODEL_FILE = "obico-failure-detection.onnx"
+# Left next to the model by the installer when the user chose to download
+# it there: the app turns Print watch on once, then removes it.
+ENABLE_MARKER = "enable-print-watch"
 MODEL_LICENSE_URL = "https://github.com/TheSpaghettiDetective/obico-server/blob/release/LICENSE"
 
 _CHUNK = 1 << 20
@@ -94,6 +97,18 @@ def download_model(
                 os.remove(part)
             except OSError:
                 pass
+
+
+def consume_enable_marker() -> bool:
+    """True (once) if the installer downloaded the model for the user."""
+    marker = os.path.join(model_dir(), ENABLE_MARKER)
+    if not os.path.exists(marker):
+        return False
+    try:
+        os.remove(marker)
+    except OSError:
+        return False  # try again next start rather than repeat forever
+    return is_installed()
 
 
 def remove_model() -> None:

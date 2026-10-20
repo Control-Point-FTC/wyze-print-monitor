@@ -236,3 +236,59 @@ def test_sound_reset_is_handed_to_the_worker(env):
     w._poll_studio()  # a new print
     assert w._sound.reset_requested is True
     w._sound = None
+
+
+def test_turning_auto_pause_off_cancels_a_pending_auto_pause(env):
+    w, main, studio, clock, _n = env
+    studio.obeys = False
+    w._on_checked(_result(FAILURE))
+    assert w.pausing()
+    main.settings.ai_auto_pause = False
+    w.apply_settings()
+    assert not w.pausing() and (w.alert is None or w.alert.severity != "pausing")
+    clock.now += pw.PAUSE_RETRY_S
+    w._poll_studio()
+    assert studio.pressed == [PAUSE]  # no retry after the switch went off
+
+
+def test_hidden_controls_dont_count_towards_giving_up(env):
+    w, _main, studio, clock, _n = env
+    studio.obeys = False
+    w._on_checked(_result(FAILURE))
+    studio.ours = False  # user flips to another Studio tab
+    for _ in range(6):
+        clock.now += 10
+        w._poll_studio()
+    assert w.pausing()  # still waiting, not "couldn't pause"
+    studio.ours = True
+    studio.controls = dict(PAUSED)  # it did pause
+    w._poll_studio()
+    assert w.alert.severity == "paused"
+
+
+def test_a_late_pause_corrects_the_couldnt_pause_alert(env):
+    w, _main, studio, clock, _n = env
+    studio.obeys = False
+    w._on_checked(_result(FAILURE))
+    clock.now += pw.PAUSE_GIVE_UP_S + 1
+    w._poll_studio()
+    assert w.alert.severity == "pause_failed"
+    studio.controls = dict(PAUSED)
+    w._poll_studio()
+    assert w.alert.severity == "paused"
+
+
+def test_a_manual_pause_doesnt_blame_the_ai(env):
+    w, _main, studio, clock, notes = env
+    w._on_sound(type("E", (), {"kind": "bang", "louder_db": 30.0})())
+    assert w.alert.severity == "sound"
+    assert w.pause_print() is True
+    w._poll_studio()
+    assert w.alert.title == "Print paused" and "AI" not in w.alert.message
+    studio.controls = dict(PRINTING)
+    w._poll_studio()
+    studio.obeys = False
+    assert w.pause_print() is True
+    clock.now += pw.PAUSE_GIVE_UP_S + 1
+    w._poll_studio()
+    assert w.alert.title == "Studio didn't pause the print" and "AI" not in w.alert.message

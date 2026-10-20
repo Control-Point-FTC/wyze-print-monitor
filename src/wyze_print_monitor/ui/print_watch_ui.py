@@ -105,10 +105,11 @@ class StudioObserver:
 
 @dataclass
 class _PendingPause:
-    started: float
+    started: float  # moved forward while Studio's controls can't be seen
     last_press: float
+    last_tick: float
     presses: int
-    result: VisionResult | None
+    auto: bool  # the AI asked (vs. the user's Pause button)
     snapshot: str = ""
 
 
@@ -136,6 +137,7 @@ class PrintWatch(QObject):
         self._printing: bool | None = None  # None: unknown (no Studio)
         self._print_paused = False
         self._pause: _PendingPause | None = None
+        self._unconfirmed_pause: _PendingPause | None = None  # gave up waiting on this one
         self._paused_by_us = False
         self._last_warning = -1e9
         self._snooze_until = 0.0
@@ -168,9 +170,12 @@ class PrintWatch(QObject):
         if url == self._url:
             return
         self._url = url
+        self._cancel_pause()  # another camera: that request isn't ours any more
         self._restart_workers()
 
     def _restart_workers(self) -> None:
+        if self._pause is not None and self._pause.auto and not self._auto_pause_allowed():
+            self._cancel_pause()  # watching or auto-pause was just turned off
         self._stop_workers()
         self._scorer.sensitivity = SENSITIVITY.get(self.settings.ai_sensitivity, 1.0)
         if not self._url:
@@ -267,6 +272,11 @@ class PrintWatch(QObject):
     def _set_print_state(self, printing: bool | None, paused: bool) -> None:
         was_printing, was_paused = self._printing, self._print_paused
         paused = bool(printing) and paused
+        if paused and not was_paused and self._unconfirmed_pause is not None:
+            # We'd given up waiting, but the pause did happen after all.
+            request, self._unconfirmed_pause = self._unconfirmed_pause, None
+            self._paused_by_us = True
+            self._raise_paused(request)
         if printing and not was_printing:
             # A print started (or Studio appeared mid-print): fresh session.
             self._reset_session()
@@ -275,7 +285,7 @@ class PrintWatch(QObject):
             self._last_warning = -1e9
         elif was_printing and printing is False:
             # The print ended (finished or stopped): its alerts are moot.
-            self._pause = None
+            self._pause = self._unconfirmed_pause = None
             self._paused_by_us = False
             self._set_alert(None)
         if was_paused and not paused and printing:
@@ -310,60 +320,97 @@ class PrintWatch(QObject):
         hwnd = self._verified_control("pause")
         return bool(hwnd) and studio_win32.press(hwnd)
 
-    def _begin_pause(self, result: VisionResult | None, snapshot: str = "") -> bool:
+    def _auto_pause_allowed(self) -> bool:
+        return bool(self.settings.ai_watch and self.settings.ai_auto_pause)
+
+    def _begin_pause(self, snapshot: str, auto: bool) -> bool:
         """Ask Studio to pause; confirmed later by _advance_pause."""
         if not self._press_pause():
             return False
         now = time.monotonic()
-        self._pause = _PendingPause(now, now, 1, result, snapshot)
+        self._pause = _PendingPause(now, now, now, 1, auto, snapshot)
+        self._unconfirmed_pause = None
         self._poll.setInterval(PAUSE_POLL_MS)
         return True
+
+    def _cancel_pause(self) -> None:
+        if self._pause is None:
+            return
+        self._pause = None
+        self._poll.setInterval(STUDIO_POLL_MS)
+        if self.alert is not None and self.alert.severity == "pausing":
+            self._set_alert(None)
 
     def _advance_pause(self) -> None:
         pending = self._pause
         if pending is None:
             return
         now = time.monotonic()
+        elapsed, pending.last_tick = now - pending.last_tick, now
+        if pending.auto and not self._auto_pause_allowed():
+            self._cancel_pause()
+            return
         if self._print_paused:
             self._pause = None
             self._poll.setInterval(STUDIO_POLL_MS)
             self._paused_by_us = True
+            self._raise_paused(pending)
+            return
+        if self._printing is False:
+            self._cancel_pause()  # the print ended meanwhile
+            return
+        if not self._view.ours:
+            # Can't see the printer's controls (another tab or printer): we
+            # can neither confirm nor retry, so this time doesn't count.
+            pending.started += elapsed
+            pending.last_press += elapsed
+            return
+        if now - pending.started >= PAUSE_GIVE_UP_S:
+            self._pause = None
+            self._unconfirmed_pause = pending  # in case Studio pauses later
+            self._poll.setInterval(STUDIO_POLL_MS)
+            if pending.auto:
+                title = "Couldn't pause the print — check it now"
+                message = (
+                    "The AI is very sure the print failed, but Studio didn't pause when asked. "
+                    "Pause or stop it yourself."
+                )
+            else:
+                title = "Studio didn't pause the print"
+                message = "Pause it in Studio yourself."
+            self._raise("pause_failed", title, message, None, snapshot=pending.snapshot)
+            return
+        if now - pending.last_press >= PAUSE_RETRY_S and pending.presses < 2 and self._press_pause():
+            pending.presses += 1
+            pending.last_press = now
+
+    def _raise_paused(self, request: _PendingPause) -> None:
+        if request.auto:
             self._raise(
                 "paused",
                 "Print paused — it looks like it failed",
                 "The AI was very sure for over 30 seconds, so it paused the print in Studio. "
                 "Check the printer, then Resume or Stop.",
                 None,
-                snapshot=pending.snapshot,
+                snapshot=request.snapshot,
                 urgent=False,
             )
-            return
-        if self._printing is False:
-            self._pause = None  # the print ended meanwhile
-            self._poll.setInterval(STUDIO_POLL_MS)
-            return
-        if now - pending.started >= PAUSE_GIVE_UP_S:
-            self._pause = None
-            self._poll.setInterval(STUDIO_POLL_MS)
+        else:
             self._raise(
-                "pause_failed",
-                "Couldn't pause the print — check it now",
-                "The AI is very sure the print failed, but Studio didn't pause when asked. "
-                "Pause or stop it yourself.",
+                "paused",
+                "Print paused",
+                "Paused from here. Check the printer, then Resume or Stop.",
                 None,
-                snapshot=pending.snapshot,
+                snapshot=request.snapshot,
+                quiet=True,
             )
-            return
-        if now - pending.last_press >= PAUSE_RETRY_S and pending.presses < 2 and self._press_pause():
-            pending.presses += 1
-            pending.last_press = now
 
     def pause_print(self) -> bool:
         """The user's Pause button: same verified, confirmed path."""
         if self._pause is not None:
             return True
         snapshot = self.alert.snapshot if self.alert else ""
-        if not self._begin_pause(None, snapshot):
+        if not self._begin_pause(snapshot, auto=False):
             return False
         self._raise("pausing", "Pausing the print…", "Waiting for Studio to confirm.", None, snapshot=snapshot, quiet=True)
         return True
@@ -431,9 +478,9 @@ class PrintWatch(QObject):
             return  # already pausing / paused
         if self.alert is not None and self.alert.severity in ("failure", "pause_failed"):
             return  # already told the user
-        if self.settings.ai_auto_pause and self._printing:
+        if self._auto_pause_allowed() and self._printing:
             snapshot = self._save_snapshot(result, "failure")
-            if self._begin_pause(result, snapshot):
+            if self._begin_pause(snapshot, auto=True):
                 self._raise(
                     "pausing",
                     "Print failure — pausing the print",

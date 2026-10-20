@@ -87,3 +87,25 @@ def test_entering_fullscreen_with_adjustments_open_keeps_them_reachable(window):
     w.view.adjust_btn.click()
     app.processEvents()
     assert _state(w) == (False, False, True)
+
+
+def test_print_watch_switch_needs_the_model_first(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor import failure_model
+
+    opened = []
+    monkeypatch.setattr(w, "_open_settings", lambda tab="": opened.append(tab))
+    monkeypatch.setattr(failure_model, "is_installed", lambda: False)
+    w.camera_panel.watch_tile.click()
+    app.processEvents()
+    assert opened == ["watch"] and not w.settings.ai_watch
+    assert not w.print_watch_action.isChecked()
+
+    monkeypatch.setattr(failure_model, "is_installed", lambda: True)
+    monkeypatch.setattr(w.print_watch, "apply_settings", lambda: None)
+    w.print_watch_action.trigger()
+    assert w.settings.ai_watch is True
+    w.binder.sync()
+    assert w.camera_panel.watch_tile.isChecked()
+    w.camera_panel.watch_tile.click()  # and off again from the tile
+    assert w.settings.ai_watch is False and not w.print_watch_action.isChecked()

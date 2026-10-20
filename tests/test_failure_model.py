@@ -67,3 +67,26 @@ def test_installed_means_present_with_the_right_size(tmp_path, monkeypatch):
 def test_pinned_model_matches_obico():
     assert fm.MODEL_URL.startswith("https://www.obico.io/")
     assert len(fm.MODEL_SHA256) == 64
+
+
+def test_installer_marker_turns_watch_on_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(fm, "model_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(fm, "is_installed", lambda: True)
+    assert fm.consume_enable_marker() is False
+    (tmp_path / fm.ENABLE_MARKER).write_text("from installer")
+    assert fm.consume_enable_marker() is True
+    assert fm.consume_enable_marker() is False  # once
+    assert not (tmp_path / fm.ENABLE_MARKER).exists()
+
+
+def test_installer_downloads_the_same_model():
+    import pathlib
+    import re
+
+    iss = (pathlib.Path(__file__).parents[1] / "installer" / "wyze-print-monitor.iss").read_text(encoding="utf-8")
+    defines = dict(re.findall(r'#define (Model\w+) "([^"]*)"', iss))
+    assert defines["ModelURL"] == fm.MODEL_URL
+    assert defines["ModelSHA256"] == fm.MODEL_SHA256
+    assert defines["ModelFile"] == fm.MODEL_FILE
+    assert defines["ModelEnableMarker"] == fm.ENABLE_MARKER
+    assert defines["ModelDir"].endswith("\wyze-print-monitor\models")
