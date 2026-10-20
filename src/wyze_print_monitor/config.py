@@ -102,6 +102,8 @@ class Settings:
     image_adjustments: dict = field(default_factory=dict)
     # Look for new releases on GitHub at startup and every few hours.
     check_updates: bool = True
+    # Video views: fill the space (crop) instead of fitting the whole picture.
+    video_fill: bool = False
 
     def resolved_snapshot_dir(self) -> str:
         if self.snapshot_dir:

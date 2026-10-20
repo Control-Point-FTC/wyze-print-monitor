@@ -72,44 +72,64 @@ Everything secret (RTSP password, Wyze password, API keys) is stored in
 
 ## Using it
 
+The same two pieces appear inside eufyMake Studio and in the app's own
+window:
+
+**The video** fills its space edge to edge. Status floats over the top
+(*LIVE · resolution · fps*, a *REC* timer, timelapse progress, zoom level),
+and a floating toolbar sits over the bottom — it fades away while you're
+not moving the mouse:
+
+| | |
+| --- | --- |
+| 📷 Snapshot · ⏺ Record · ⏱ Timelapse | capture (see below) |
+| ☀ Picture | brightness, exposure, rotate, zoom… |
+| ⛶ Fit / Fill | show the whole picture, or fill the space (crops the edges) |
+| 📁 Folders · ⤢ Fullscreen · ⧉ Full window · ⚙ Settings | |
+
+**Scroll** over the video to zoom in (great for watching the nozzle),
+**drag** to move around while zoomed, **double-click** for fullscreen
+(Esc to leave). Click the zoom chip to reset.
+
+**The camera panel** has big toggles for the **siren**, **spotlight**,
+**motion detection** and **alerts** (push notifications), power on/off and
+restart, your **recent captures** (click one to open it), quick
+**brightness / exposure / zoom** sliders, and the camera's details. If the
+Wyze connection needs attention, a banner at the top says why — with a
+Connect button.
+
 ### Inside eufyMake Studio
 
 With Studio open on the **Device** tab and your camera's printer selected,
-the app replaces two panels:
-
-- **Monitor** → the live Wyze feed, with *LIVE / resolution / REC / timelapse*
-  status and a toolbar: **Snapshot**, **Record**, **Timelapse**, **Adjust**,
-  folders, fullscreen, full window and settings.
-- **Others** → **Wyze Cam** controls: power, restart, siren, spotlight, motion
-  detection, push notifications and camera info.
-
-Studio's own Control, Progress / Start Printing and printer list are left
-alone. The panels follow Studio's window and disappear on the Slice tab.
-They only show while the printer with the camera is selected — pick which
-one in Settings → **Printer with camera** (row 1 by default).
+the video replaces Studio's **Monitor** and the camera panel replaces its
+empty **Others** card. Studio's own Control, Progress / Start Printing and
+printer list are left alone. The panels follow Studio's window and
+disappear on the Slice tab. They only show while the printer with the
+camera is selected — pick which one in Settings → **Printer with camera**
+(row 1 by default).
 
 ### The full window
 
-Open it from the tray icon, the Start menu, or the window button in the
-docked toolbar. Closing it while Studio is open just hides it; quit from
-**File → Exit** or the tray icon.
+Open it from the tray icon, the Start menu, or the full-window button on
+the docked toolbar. Closing it while Studio is open just hides it; quit
+from **File → Exit** or the tray icon.
 
-![The full window with the Image tab](docs/screenshots/main-window.png)
+![The full window](docs/screenshots/main-window.png)
 
 ### Picture adjustments
 
-**Adjust** (docked) or the **Image** tab (full window): brightness, contrast,
-exposure, gamma, saturation, warmth, sharpness, rotate 90°, flip, and
-digital zoom with pan — handy for zooming in on the nozzle. Adjustments
-apply to the live view *and* to snapshots, recordings and timelapses, and
-are remembered. Double-click a value to reset it, or **Reset all**.
+The ☀ button (or *All adjustments…* in the camera panel): brightness,
+contrast, exposure, gamma, saturation, warmth, sharpness, rotate 90°, flip,
+and digital zoom with pan. Adjustments apply to the live view *and* to
+snapshots, recordings and timelapses, and are remembered. Double-click a
+value to reset it, or **Reset all**.
 
 ### Snapshots, recordings, timelapses
 
 Saved to `Pictures\wyze-print-monitor` and `Videos\wyze-print-monitor` by
-default (change in Settings). A timelapse grabs a frame every N seconds
-(Settings → *Timelapse interval*) and is compiled into an MP4 when you stop
-it.
+default (change in Settings) and listed under *Recent captures*. A
+timelapse grabs a frame every N seconds (Settings → *Timelapse interval*)
+and is compiled into an MP4 when you stop it.
 
 ## Updates
 
@@ -152,12 +172,15 @@ build\dist\WyzePrintMonitor\WyzePrintMonitor.exe --self-test report.txt
 then push a tag `vX.Y.Z`. The *Release* workflow builds and self-tests the
 installer and publishes the GitHub release that installed apps update from.
 
-Layout: `app.py` (entry, tray, single instance), `ui/main_window.py` (full
-window and all camera / capture logic), `ui/studio_dock.py` +
-`studio_win32.py` (embedding into Studio), `adjust.py` (picture
-adjustments), `capture.py` / `timelapse.py` (stream, recording),
+Layout: `app.py` (entry, tray, single instance), `ui/main_window.py` (the
+camera / capture logic and the controls that own it), `ui/views.py` (the
+video view and camera panel you see), `ui/binder.py` (binds views to the
+main window's controls), `ui/studio_dock.py` + `studio_win32.py` (embedding
+into Studio), `adjust.py` (picture adjustments), `capture.py` /
+`timelapse.py` / `captures.py` (stream, recording, recent captures),
 `wyze_control.py` (Wyze cloud), `updater.py` + `ui/update_ui.py` (updates),
-`installer/` + `packaging/` (Windows build).
+`installer/` + `packaging/` (Windows build; `packaging/make_artwork.py`
+regenerates icons and installer art from the logo).
 
 ## License
 
