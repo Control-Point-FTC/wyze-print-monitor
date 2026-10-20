@@ -11,17 +11,28 @@ Rules (the user's):
 * Never stop a print on its own: Stop is a button on the alert, and it asks
   first.
 
-While Studio is open we only watch when it shows a print running (its Pause
-button is visible), which also keeps the CPU idle between prints. Without
-Studio there's no way to know, so we watch whenever the stream is live
-(alerts only: there's nothing to pause through).
+Pressing anything in Studio is guarded twice over:
+
+* **Right printer.** Studio's Device tab shows the controls of whichever
+  printer is selected in its list; we only use them while that is the
+  camera's printer (Settings → "Printer with camera"), and re-check right
+  before every press.
+* **Confirmed.** A press is only a request. A pause counts once Studio shows
+  Resume; until then it's "pausing", it's retried once, and if Studio still
+  doesn't pause we say so loudly instead of pretending.
+
+Print state (running / paused / finished) is only read while we can see the
+camera printer's controls. Switching Studio to another tab or printer
+doesn't end the print as far as we're concerned. Without Studio at all
+there's no way to know, so we watch whenever the stream is live (alerts
+only: there's nothing to pause through).
 """
 from __future__ import annotations
 
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -34,6 +45,9 @@ from ..print_watch import SoundWorker, VisionResult, VisionWorker
 from ..sound_watch import describe as describe_sound
 
 STUDIO_POLL_MS = 3000
+PAUSE_POLL_MS = 1000  # while waiting for Studio to confirm a pause
+PAUSE_RETRY_S = 6.0  # no Resume button yet: press Pause once more
+PAUSE_GIVE_UP_S = 15.0  # still running: tell the user to pause it
 WARNING_REPEAT_S = 15 * 60  # don't nag: one warning alert per this long
 LOOKS_FINE_SNOOZE_S = 30 * 60
 BASELINE_SAVE_EVERY = 30  # checks
@@ -41,7 +55,8 @@ BASELINE_SAVE_EVERY = 30  # checks
 
 @dataclass
 class Alert:
-    severity: str  # "warning" | "failure" | "paused" | "sound"
+    # "warning" | "failure" | "pausing" | "paused" | "pause_failed" | "sound"
+    severity: str
     title: str
     message: str
     snapshot: str = ""
@@ -49,6 +64,52 @@ class Alert:
     can_resume: bool = False
     can_stop: bool = False
     at: float = 0.0
+
+
+@dataclass
+class StudioView:
+    """What we can see of Studio right now."""
+
+    running: bool = False  # Studio is open
+    ours: bool = False  # its Device tab shows the camera's printer
+    controls: dict = field(default_factory=dict)  # {"pause"|"resume"|"stop": hwnd}, only when ours
+
+
+class StudioObserver:
+    """Reads Studio's print controls for the camera's printer only.
+
+    The selected printer is read from the screen (the row's color), which
+    is impossible while another window covers Studio's list: then the last
+    confirmed selection stands — the selection can only change by clicking
+    in Studio, which uncovers it.
+    """
+
+    def __init__(self) -> None:
+        self._selected_ok: bool | None = None
+
+    def observe(self, configured_row: int) -> StudioView:
+        top = studio_win32.find_studio()
+        if not top:
+            self._selected_ok = None
+            return StudioView()
+        layout = studio_win32.locate_layout(top)
+        if layout is None:  # Device tab not showing (or Studio still starting)
+            return StudioView(running=True)
+        colors = [studio_win32.row_color(row) for row in layout.printer_rows]
+        selected = studio_win32.selected_row_index(colors)
+        self._selected_ok = studio_win32.camera_printer_selected(selected, configured_row, self._selected_ok)
+        if not studio_win32.may_control_print(self._selected_ok, configured_row, len(layout.printer_rows)):
+            return StudioView(running=True)
+        return StudioView(True, True, studio_win32.find_print_controls(layout.host))
+
+
+@dataclass
+class _PendingPause:
+    started: float
+    last_press: float
+    presses: int
+    result: VisionResult | None
+    snapshot: str = ""
 
 
 class PrintWatch(QObject):
@@ -70,9 +131,11 @@ class PrintWatch(QObject):
         self._sound_status = ""
         self._url = ""
         self._scorer = FailureScorer(Baseline.from_dict(main.settings.ai_baseline))
-        self._studio_controls: dict[str, int] = {}
-        self._studio_seen = False
+        self._observer = StudioObserver()
+        self._view = StudioView()
         self._printing: bool | None = None  # None: unknown (no Studio)
+        self._print_paused = False
+        self._pause: _PendingPause | None = None
         self._paused_by_us = False
         self._last_warning = -1e9
         self._snooze_until = 0.0
@@ -169,66 +232,152 @@ class PrintWatch(QObject):
             except OSError:
                 pass
 
-    # ------------------------------------------------------------------ Studio
-    def _poll_studio(self) -> None:
-        top = studio_win32.find_studio()
-        controls = studio_win32.find_print_controls(top) if top else {}
-        self._studio_seen = bool(top)
-        self._studio_controls = controls
-        printing = ("pause" in controls or "resume" in controls) if top else None
-        if printing and not self._printing:
-            # A print started (or Studio appeared mid-print): fresh session.
-            self._reset_session()
-            self._paused_by_us = False
-            self._snooze_until = 0.0
-            if self._sound is not None:
-                self._sound.anomaly.reset()
-        if self._printing and printing is False and self.alert and self.alert.severity != "paused":
-            self._set_alert(None)  # print ended: an old warning is moot
-        self._printing = printing
-        # Only spend CPU while something is printing (or we can't tell).
-        idle = printing is False or "resume" in controls  # finished, or paused
-        for worker in (self._vision, self._sound):
-            if worker is not None:
-                worker.paused = idle
-        if self.alert is not None:
-            self.alert.can_pause = "pause" in controls
-            self.alert.can_resume = "resume" in controls
-            self.alert.can_stop = "stop" in controls
-            self.alert_changed.emit(self.alert)
-        self.status_changed.emit()
-
     def _reset_session(self) -> None:
-        # The scorer belongs to the vision thread while it runs.
+        """Fresh short-term history for the model and the sound check. Both
+        belong to their worker threads while those run, so ask them."""
         if self._vision is not None:
             self._vision.reset_requested = True
         else:
             self._scorer.reset_session()
+        if self._sound is not None:
+            self._sound.reset_requested = True
 
-    def can_pause(self) -> bool:
-        return "pause" in self._studio_controls
+    # ------------------------------------------------------------------ Studio
+    def _observe(self) -> StudioView:
+        self._view = self._observer.observe(self.settings.dock_printer_row)
+        return self._view
 
-    def pause_print(self) -> bool:
-        hwnd = self._studio_controls.get("pause")
-        ok = bool(hwnd) and studio_win32.press(hwnd)
-        if ok:
-            QTimer.singleShot(1500, self._poll_studio)
-        return ok
+    def _poll_studio(self) -> None:
+        view = self._observe()
+        if not view.running:
+            self._set_print_state(None, False)
+        elif view.ours:
+            c = view.controls
+            self._set_print_state("pause" in c or "resume" in c, "resume" in c)
+        # else: Studio is open but not showing the camera printer's controls
+        # (another tab or printer): nothing new is known — keep what we had.
+        self._advance_pause()
+        idle = self._printing is False or self._print_paused
+        for worker in (self._vision, self._sound):
+            if worker is not None:
+                worker.paused = idle
+        self._refresh_alert_actions()
+        self.status_changed.emit()
 
-    def resume_print(self) -> bool:
-        hwnd = self._studio_controls.get("resume")
-        ok = bool(hwnd) and studio_win32.press(hwnd)
-        if ok:
+    def _set_print_state(self, printing: bool | None, paused: bool) -> None:
+        was_printing, was_paused = self._printing, self._print_paused
+        paused = bool(printing) and paused
+        if printing and not was_printing:
+            # A print started (or Studio appeared mid-print): fresh session.
+            self._reset_session()
+            self._paused_by_us = False
+            self._snooze_until = 0.0
+            self._last_warning = -1e9
+        elif was_printing and printing is False:
+            # The print ended (finished or stopped): its alerts are moot.
+            self._pause = None
+            self._paused_by_us = False
+            self._set_alert(None)
+        if was_paused and not paused and printing:
+            # Resumed (here or in Studio): watch afresh, don't re-pause on
+            # the old evidence.
             self._paused_by_us = False
             self._reset_session()
-            self._set_alert(None)
-            QTimer.singleShot(1500, self._poll_studio)
+            if self.alert is not None and self.alert.severity in ("paused", "failure", "pause_failed"):
+                self._set_alert(None)
+        self._printing = printing
+        self._print_paused = paused
+
+    def _verified_control(self, kind: str) -> int | None:
+        """The camera printer's ``kind`` button, re-checked right now."""
+        view = self._observe()
+        return view.controls.get(kind) if view.ours else None
+
+    def _refresh_alert_actions(self) -> None:
+        if self.alert is None:
+            return
+        c = self._view.controls if self._view.ours else {}
+        actions = ("pause" in c and self._pause is None, "resume" in c, "stop" in c)
+        if actions != (self.alert.can_pause, self.alert.can_resume, self.alert.can_stop):
+            self.alert.can_pause, self.alert.can_resume, self.alert.can_stop = actions
+            self.alert_changed.emit(self.alert)
+
+    # ------------------------------------------------------------------ pausing
+    def pausing(self) -> bool:
+        return self._pause is not None
+
+    def _press_pause(self) -> bool:
+        hwnd = self._verified_control("pause")
+        return bool(hwnd) and studio_win32.press(hwnd)
+
+    def _begin_pause(self, result: VisionResult | None, snapshot: str = "") -> bool:
+        """Ask Studio to pause; confirmed later by _advance_pause."""
+        if not self._press_pause():
+            return False
+        now = time.monotonic()
+        self._pause = _PendingPause(now, now, 1, result, snapshot)
+        self._poll.setInterval(PAUSE_POLL_MS)
+        return True
+
+    def _advance_pause(self) -> None:
+        pending = self._pause
+        if pending is None:
+            return
+        now = time.monotonic()
+        if self._print_paused:
+            self._pause = None
+            self._poll.setInterval(STUDIO_POLL_MS)
+            self._paused_by_us = True
+            self._raise(
+                "paused",
+                "Print paused — it looks like it failed",
+                "The AI was very sure for over 30 seconds, so it paused the print in Studio. "
+                "Check the printer, then Resume or Stop.",
+                None,
+                snapshot=pending.snapshot,
+                urgent=False,
+            )
+            return
+        if self._printing is False:
+            self._pause = None  # the print ended meanwhile
+            self._poll.setInterval(STUDIO_POLL_MS)
+            return
+        if now - pending.started >= PAUSE_GIVE_UP_S:
+            self._pause = None
+            self._poll.setInterval(STUDIO_POLL_MS)
+            self._raise(
+                "pause_failed",
+                "Couldn't pause the print — check it now",
+                "The AI is very sure the print failed, but Studio didn't pause when asked. "
+                "Pause or stop it yourself.",
+                None,
+                snapshot=pending.snapshot,
+            )
+            return
+        if now - pending.last_press >= PAUSE_RETRY_S and pending.presses < 2 and self._press_pause():
+            pending.presses += 1
+            pending.last_press = now
+
+    def pause_print(self) -> bool:
+        """The user's Pause button: same verified, confirmed path."""
+        if self._pause is not None:
+            return True
+        snapshot = self.alert.snapshot if self.alert else ""
+        if not self._begin_pause(None, snapshot):
+            return False
+        self._raise("pausing", "Pausing the print…", "Waiting for Studio to confirm.", None, snapshot=snapshot, quiet=True)
+        return True
+
+    def resume_print(self) -> bool:
+        hwnd = self._verified_control("resume")
+        ok = bool(hwnd) and studio_win32.press(hwnd)
+        if ok:
+            QTimer.singleShot(1500, self._poll_studio)  # state follows when Studio shows Pause again
         return ok
 
     def stop_print(self, parent: QWidget | None = None) -> bool:
         """Stop — only after the user confirms (Studio may ask again)."""
-        hwnd = self._studio_controls.get("stop")
-        if not hwnd:
+        if not self._verified_control("stop"):
             return False
         answer = QMessageBox.warning(
             parent,
@@ -239,9 +388,9 @@ class PrintWatch(QObject):
         )
         if answer != QMessageBox.Yes:
             return False
-        ok = studio_win32.press(hwnd)
+        hwnd = self._verified_control("stop")  # re-check: the dialog took time
+        ok = bool(hwnd) and studio_win32.press(hwnd)
         if ok:
-            self._set_alert(None)
             QTimer.singleShot(1500, self._poll_studio)
         return ok
 
@@ -263,9 +412,11 @@ class PrintWatch(QObject):
             self._save_baseline()
         self.status_changed.emit()
         now = time.monotonic()
+        if now < self._snooze_until:
+            return  # "Looks fine": quiet, failures included
         if result.level == FAILURE:
-            self._on_failure(result, now)
-        elif result.level == WARNING and now >= self._snooze_until:
+            self._on_failure(result)
+        elif result.level == WARNING:
             if now - self._last_warning >= WARNING_REPEAT_S and (self.alert is None or self.alert.severity == "sound"):
                 self._last_warning = now
                 self._raise(
@@ -275,28 +426,34 @@ class PrintWatch(QObject):
                     result,
                 )
 
-    def _on_failure(self, result: VisionResult, now: float) -> None:
-        if self.alert is not None and self.alert.severity in ("failure", "paused"):
-            return  # already handling it
-        if self._paused_by_us:
-            return
-        if self.settings.ai_auto_pause and self.can_pause() and self.pause_print():
-            self._paused_by_us = True
-            self._raise(
-                "paused",
-                "Print paused — it looks like it failed",
-                "The AI was very sure for over 30 seconds, so it pressed Pause in Studio. "
-                "Check the printer, then Resume or Stop.",
-                result,
-            )
+    def _on_failure(self, result: VisionResult) -> None:
+        if self._pause is not None or self._paused_by_us or self._print_paused:
+            return  # already pausing / paused
+        if self.alert is not None and self.alert.severity in ("failure", "pause_failed"):
+            return  # already told the user
+        if self.settings.ai_auto_pause and self._printing:
+            snapshot = self._save_snapshot(result, "failure")
+            if self._begin_pause(result, snapshot):
+                self._raise(
+                    "pausing",
+                    "Print failure — pausing the print",
+                    "The AI is very sure the print failed. Pausing it in Studio…",
+                    None,
+                    snapshot=snapshot,
+                )
+                return
+        if not self.settings.ai_auto_pause:
+            why = " (auto-pause is off)"
+        elif self._printing is None:
+            why = " (open eufyMake Studio's Device tab to let it pause prints)"
         else:
-            why = "" if self.settings.ai_auto_pause else " (auto-pause is off)"
-            self._raise(
-                "failure",
-                "The print looks like it failed",
-                f"The AI is very sure something went wrong{why}. Check the printer now.",
-                result,
-            )
+            why = " (Studio isn't showing this printer's Pause button)"
+        self._raise(
+            "failure",
+            "The print looks like it failed",
+            f"The AI is very sure something went wrong{why}. Check the printer now.",
+            result,
+        )
 
     def _on_sound(self, event) -> None:
         if time.monotonic() < self._snooze_until or (self.alert is not None and self.alert.severity != "sound"):
@@ -314,22 +471,34 @@ class PrintWatch(QObject):
         self.main.status_message.emit(message)
 
     # ------------------------------------------------------------------ alerting
-    def _raise(self, severity: str, title: str, message: str, result: VisionResult | None) -> None:
-        snapshot = self._save_snapshot(result, severity)
-        controls = self._studio_controls
+    def _raise(
+        self,
+        severity: str,
+        title: str,
+        message: str,
+        result: VisionResult | None,
+        snapshot: str = "",
+        urgent: bool | None = None,
+        quiet: bool = False,
+    ) -> None:
+        if not snapshot and severity != "pausing":
+            snapshot = self._save_snapshot(result, severity)
+        c = self._view.controls if self._view.ours else {}
         alert = Alert(
             severity,
             title,
             message,
             snapshot,
-            can_pause="pause" in controls,
-            can_resume="resume" in controls,
-            can_stop="stop" in controls,
+            can_pause="pause" in c and self._pause is None,
+            can_resume="resume" in c,
+            can_stop="stop" in c,
             at=time.time(),
         )
         self._set_alert(alert)
+        if quiet:
+            return
         self.notify.emit(title, message)
-        _beep(severity in ("failure", "paused"))
+        _beep(severity in ("failure", "pausing", "pause_failed") if urgent is None else urgent)
 
     def _set_alert(self, alert: Alert | None) -> None:
         self.alert = alert
@@ -356,6 +525,8 @@ class PrintWatch(QObject):
     def status_text(self) -> str:
         if not self.settings.ai_watch:
             return ""
+        if self._pause is not None:
+            return "Print watch: pausing the print…"
         if not self.model_ready():
             return "Print watch: model not downloaded"
         if self._error:
@@ -364,7 +535,7 @@ class PrintWatch(QObject):
             return "Print watch: waiting for video"
         if self._printing is False:
             return "Print watch: idle (no print running)"
-        if self._printing and "resume" in self._studio_controls:
+        if self._print_paused:
             return "Print watch: print paused"
         if not self.last_check:
             return "Print watch: starting…"

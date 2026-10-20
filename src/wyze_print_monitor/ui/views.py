@@ -114,7 +114,8 @@ QFrame#pill QToolButton#quality {{
 QFrame#pill QToolButton#quality::menu-indicator {{ image: none; width: 0; }}
 QFrame#pillSep {{ background: rgba(255, 255, 255, 40); }}
 QFrame#alert {{ background: rgba(58, 51, 36, 240); border: 1px solid #8a6d2f; border-radius: 10px; }}
-QFrame#alert[severity="failure"], QFrame#alert[severity="paused"] {{
+QFrame#alert[severity="failure"], QFrame#alert[severity="paused"],
+QFrame#alert[severity="pausing"], QFrame#alert[severity="pause_failed"] {{
     background: rgba(70, 30, 30, 242); border-color: {RED};
 }}
 QLabel#alertTitle {{ font-size: 14px; font-weight: 600; color: #ffffff; }}
@@ -297,10 +298,10 @@ class AlertBar(QFrame):
         self.title.setText(f"{icon}  {alert.title}")
         self.text.setText(alert.message)
         self.view_btn.setVisible(bool(alert.snapshot))
-        self.pause_btn.setVisible(alert.can_pause and alert.severity != "paused")
+        self.pause_btn.setVisible(alert.can_pause and alert.severity not in ("paused", "pausing"))
         self.resume_btn.setVisible(alert.can_resume)
         self.stop_btn.setVisible(alert.can_stop)
-        self.fine_btn.setText("Dismiss" if alert.severity == "paused" else "Looks fine")
+        self.fine_btn.setText("Looks fine" if alert.severity in ("warning", "failure", "sound") else "Dismiss")
         self.show()
         self.raise_()
 

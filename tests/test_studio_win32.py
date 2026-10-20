@@ -73,3 +73,13 @@ def test_classify_print_controls():
     assert classify_control("Abort") == "stop"
     assert classify_control("Pause camera") is None
     assert classify_control("") is None
+
+
+def test_may_control_print_only_for_the_cameras_printer():
+    from wyze_print_monitor.studio_win32 import may_control_print
+
+    assert may_control_print(True, 1, 2) is True
+    assert may_control_print(False, 1, 2) is False
+    assert may_control_print(None, 1, 2) is False  # selection never read yet
+    assert may_control_print(True, 0, 2) is False  # "any printer" with two: can't tell
+    assert may_control_print(True, 0, 1) is True

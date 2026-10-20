@@ -144,9 +144,13 @@ class PanelBinder(QObject):
         v.folder_btn.setMenu(folders)
         _show_fill(v, bool(m.settings.video_fill))
         watch = m.print_watch
-        v.alert.fine_btn.clicked.connect(watch.looks_fine)
+        v.alert.fine_btn.clicked.connect(
+            lambda: watch.looks_fine()
+            if watch.alert and watch.alert.severity in ("warning", "failure", "sound")
+            else watch.dismiss()
+        )
         v.alert.pause_btn.clicked.connect(lambda: watch.pause_print() or m.status_message.emit(
-            "Couldn't find Studio's Pause button."))
+            "Couldn't pause: Studio isn't showing this printer's Pause button."))
         v.alert.resume_btn.clicked.connect(watch.resume_print)
         v.alert.stop_btn.clicked.connect(lambda: watch.stop_print(v.window()))
         v.alert.view_btn.clicked.connect(self._view_alert_snapshot)

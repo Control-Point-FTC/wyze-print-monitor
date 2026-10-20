@@ -129,6 +129,7 @@ class SoundWorker(QThread):
         self._stop = False
         self._wake = threading.Event()
         self.paused = False
+        self.reset_requested = False  # GUI: forget the learned sound (applied here)
         self.anomaly = SoundAnomaly()
 
     def request_stop(self) -> None:
@@ -176,6 +177,9 @@ class SoundWorker(QThread):
                     buf = np.concatenate([buf, samples / 32768.0])
                 while buf.size >= window:
                     chunk, buf = buf[:window], buf[window:]
+                    if self.reset_requested:
+                        self.reset_requested = False
+                        self.anomaly.reset()
                     if self.paused:
                         continue
                     event = self.anomaly.update(band_levels(chunk, rate), time.monotonic())

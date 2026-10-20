@@ -83,6 +83,18 @@ def camera_printer_selected(
     return selected == configured_row - 1
 
 
+def may_control_print(selected_ok: bool | None, configured_row: int, row_count: int) -> bool:
+    """May we use (or trust) the print controls Studio shows right now?
+
+    Only when they're the camera's printer's: it's the selected one. With
+    "any printer" configured that's only certain if there's a single
+    printer — otherwise we can't know which printer the camera watches.
+    """
+    if selected_ok is not True:
+        return False
+    return configured_row > 0 or row_count <= 1
+
+
 def pick_printer_rows(
     candidates: list[tuple[int, Rect]], list_rect: Rect, header_bottom: int
 ) -> list[int]:
