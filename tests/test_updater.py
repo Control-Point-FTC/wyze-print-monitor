@@ -124,3 +124,21 @@ def test_release_without_installer_cannot_download(tmp_path):
     info = ReleaseInfo(version="9.9.9", page_url=updater.RELEASES_PAGE)
     with pytest.raises(UpdateError):
         download_installer(info, str(tmp_path))
+
+
+def test_installer_helper_waits_for_this_process_then_installs_silently():
+    """Setup must only start after the app exited (else AppMutex + suppressed
+    prompts can cancel a silent update); odd paths must not break quoting."""
+    import base64
+
+    from wyze_print_monitor.updater import INSTALLER_ARGS, installer_launch_command
+
+    cmd = installer_launch_command(4242, r"C:\Users\O'Brien\Temp\WyzePrintMonitor-2.0.0-setup.exe")
+    assert cmd[0] == "powershell.exe" and "-EncodedCommand" in cmd
+    script = base64.b64decode(cmd[cmd.index("-EncodedCommand") + 1]).decode("utf-16-le")
+    wait_at = script.index("Wait-Process -Id 4242")
+    start_at = script.index("Start-Process")
+    assert wait_at < start_at
+    assert r"'C:\Users\O''Brien\Temp\WyzePrintMonitor-2.0.0-setup.exe'" in script
+    for arg in INSTALLER_ARGS:
+        assert f"'{arg}'" in script

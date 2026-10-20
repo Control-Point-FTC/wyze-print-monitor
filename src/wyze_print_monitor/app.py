@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import getpass
+import os
 import sys
+import time
 from pathlib import Path
 
+from PySide6.QtCore import QLockFile, QStandardPaths
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -44,25 +47,37 @@ def _instance_name() -> str:
     return f"WyzePrintMonitor-{getpass.getuser()}"
 
 
-def _signal_running_instance() -> bool:
-    """If the app is already running, ask it to come forward. True if so."""
-    socket = QLocalSocket()
-    socket.connectToServer(_instance_name())
-    if not socket.waitForConnected(500):
-        return False
-    socket.write(b"show")
-    socket.flush()
-    socket.waitForBytesWritten(500)
-    socket.disconnectFromServer()
-    return True
+def _claim_single_instance() -> QLockFile | None:
+    """Atomically claim "the running copy". Returns the held lock, or None
+    if another copy holds it. Must happen before any window or camera work,
+    so two near-simultaneous launches can't both get through. A lock left
+    by a crashed copy is detected as stale and taken over."""
+    path = os.path.join(QStandardPaths.writableLocation(QStandardPaths.TempLocation), _instance_name() + ".lock")
+    lock = QLockFile(path)
+    lock.setStaleLockTime(0)  # stale = its owner process is gone
+    return lock if lock.tryLock(0) else None
+
+
+def _signal_running_instance(attempts: int = 20) -> bool:
+    """Ask the running copy to come forward. It may still be starting up
+    (lock taken, not listening yet), so retry for a few seconds."""
+    for _ in range(attempts):
+        socket = QLocalSocket()
+        socket.connectToServer(_instance_name())
+        if socket.waitForConnected(300):
+            socket.write(b"show")
+            socket.flush()
+            socket.waitForBytesWritten(500)
+            socket.disconnectFromServer()
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def _listen_for_other_launches(app: QApplication, window: MainWindow) -> QLocalServer:
     """Opening the app again (Start menu, desktop icon) brings this one up
     instead of starting a second copy that would fight over the camera."""
     server = QLocalServer(app)
-    QLocalServer.removeServer(_instance_name())
-    server.listen(_instance_name())
 
     def on_connection() -> None:
         connection = server.nextPendingConnection()
@@ -71,6 +86,12 @@ def _listen_for_other_launches(app: QApplication, window: MainWindow) -> QLocalS
         window.show_window()
 
     server.newConnection.connect(on_connection)
+    if not server.listen(_instance_name()):
+        # We hold the instance lock, so any existing endpoint is a leftover
+        # from a crashed copy: clear it and try once more.
+        QLocalServer.removeServer(_instance_name())
+        if not server.listen(_instance_name()):
+            print(f"Single-instance listener unavailable: {server.errorString()}", file=sys.stderr)
     return server
 
 
@@ -157,11 +178,14 @@ def self_test(report_path: str) -> int:
         return PySide6.__version__, True
 
     def wyze():
-        import wyzeapy  # noqa: F401
+        from wyzeapy.wyze_auth_lib import get_ssl_context
 
         from .wyze_control import WyzeController  # noqa: F401
 
-        return "wyzeapy importable", True
+        # Builds the exact TLS context login uses: needs certifi's bundle and
+        # wyzeapy's own wyze_api_ca.pem to be packaged.
+        get_ssl_context()
+        return "client + Wyze TLS certificates OK", True
 
     check("OpenCV", opencv)
     check("Credential store", credentials)
@@ -186,7 +210,9 @@ def main() -> int:
     app.setOrganizationName("Control-Point-FTC")
     app.setWindowIcon(app_icon())
     app.setStyleSheet(DARK_QSS)
-    if _signal_running_instance():
+    instance_lock = _claim_single_instance()
+    if instance_lock is None:
+        _signal_running_instance()
         return 0
     mutex = _hold_installer_mutex() if sys.platform == "win32" else None  # noqa: F841 - held for the app's lifetime
     window = MainWindow()
@@ -206,7 +232,9 @@ def main() -> int:
         window._status("Showing the camera inside eufyMake Studio's Device tab.", 5000)
     else:
         window.show()
-    return app.exec()
+    code = app.exec()
+    instance_lock.unlock()
+    return code
 
 
 if __name__ == "__main__":

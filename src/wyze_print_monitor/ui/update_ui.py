@@ -5,8 +5,9 @@
 Help → Check for updates. When a newer release exists it emits
 ``available``; the window's status bar, the Studio dock and the tray then
 show an Update button. Installing downloads the release's installer
-(verified, see ``updater``), runs it silently and quits; the installer
-reopens the app when it's done.
+(verified, see ``updater``), quits, and a small hidden helper starts the
+installer once this process has fully exited; the installer reopens the app
+when it's done.
 
 Self-install only happens in the installed (packaged) app. Run from source,
 "Update" opens the release page instead.
@@ -17,41 +18,63 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 
-from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 
 from .. import __version__
-from ..updater import ReleaseInfo, UpdateError, download_installer, fetch_latest, is_newer
+from ..updater import (
+    ReleaseInfo,
+    UpdateError,
+    download_installer,
+    fetch_latest,
+    installer_launch_command,
+    is_newer,
+)
 
 FIRST_CHECK_DELAY_MS = 8_000
 CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
-# Inno Setup flags: no wizard pages, no prompts, close the running app.
-INSTALLER_ARGS = ("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS")
 
 
-class _Worker(QThread):
-    """Runs one blocking network call off the GUI thread."""
+class _Worker(QObject):
+    """Runs one blocking network call on a daemon thread.
+
+    Daemon threads never hold up quitting (a stalled GitHub request can't
+    freeze the app on exit). The QObject has no Qt parent, so it stays valid
+    for as long as the thread holds it; signals reach the GUI thread queued.
+    """
 
     succeeded = Signal(object)
     failed = Signal(str)
     progress = Signal(int, int)
 
-    def __init__(self, job, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, job) -> None:
+        super().__init__()
         self._job = job
         self.cancel_requested = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
 
-    def run(self) -> None:
+    def start(self) -> None:
+        self._thread.start()
+
+    def is_running(self) -> bool:
+        return self._thread.is_alive()
+
+    def _run(self) -> None:
         try:
             result = self._job(self)
         except UpdateError as exc:
-            self.failed.emit(str(exc))
+            outcome = (self.failed, str(exc))
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, never crashes the app
-            self.failed.emit(f"Unexpected error: {exc}")
+            outcome = (self.failed, f"Unexpected error: {exc}")
         else:
-            self.succeeded.emit(result)
+            outcome = (self.succeeded, result)
+        try:
+            outcome[0].emit(outcome[1])
+        except RuntimeError:
+            pass  # app already shutting down
 
 
 def can_self_install() -> bool:
@@ -78,31 +101,26 @@ class UpdateManager(QObject):
         QTimer.singleShot(FIRST_CHECK_DELAY_MS, lambda: self.check(silent=True))
         self._timer.start()
 
-    def busy(self) -> bool:
-        return any(
-            w is not None and w.isRunning() for w in (self._check_worker, self._download_worker)
-        )
-
-    def wait(self) -> None:
-        """Join worker threads before the app exits."""
-        for worker in (self._check_worker, self._download_worker):
-            if worker is not None and worker.isRunning():
-                worker.cancel_requested = True
-                worker.wait()
+    def shutdown(self) -> None:
+        """Called on exit: stop a download; never waits on the network."""
+        self._timer.stop()
+        if self._download_worker is not None:
+            self._download_worker.cancel_requested = True
 
     # ------------------------------------------------------------------ check
     def check(self, silent: bool) -> None:
         if silent and not self.main.settings.check_updates:
             return
-        if self._check_worker is not None and self._check_worker.isRunning():
+        if self._check_worker is not None and self._check_worker.is_running():
             return
-        worker = _Worker(lambda _w: fetch_latest(), self)
+        worker = _Worker(lambda _w: fetch_latest())
         worker.succeeded.connect(lambda info: self._on_checked(info, silent))
         worker.failed.connect(lambda error: self._on_check_failed(error, silent))
         self._check_worker = worker
         worker.start()
 
     def _on_checked(self, info: ReleaseInfo | None, silent: bool) -> None:
+        self._check_worker = None  # finished: let it be collected
         if info is not None and is_newer(info.version, __version__):
             if self.latest != info:
                 self.latest = info
@@ -117,6 +135,7 @@ class UpdateManager(QObject):
             )
 
     def _on_check_failed(self, error: str, silent: bool) -> None:
+        self._check_worker = None
         if not silent:
             QMessageBox.warning(self.main, "Check for updates", error)
 
@@ -128,17 +147,23 @@ class UpdateManager(QObject):
         if not can_self_install() or not info.installer_url:
             QDesktopServices.openUrl(QUrl(info.page_url))
             return
-        if self._download_worker is not None and self._download_worker.isRunning():
-            return
+        if self._download_worker is not None:
+            return  # already downloading
         main = self.main
-        if main._compile_worker is not None and main._compile_worker.isRunning():
+        if main._timelapse is not None or (
+            main._compile_worker is not None and main._compile_worker.isRunning()
+        ):
+            # Quitting mid-timelapse would leave its frames without a video.
             QMessageBox.information(
-                main, "Update", "A timelapse is still being compiled — update once it's saved."
+                main,
+                "Update",
+                "A timelapse is in progress. Stop it (it'll be saved as a video), "
+                "then click Update again.",
             )
             return
         warning = ""
-        if main._recorder is not None or main._timelapse is not None:
-            warning = "\n\nThe recording / timelapse in progress will be stopped and saved first."
+        if main._recorder is not None:
+            warning = "\n\nThe recording in progress will be stopped and saved first."
         size_mb = info.installer_size / 1_048_576 if info.installer_size else 0
         answer = QMessageBox.question(
             main,
@@ -166,8 +191,7 @@ class UpdateManager(QObject):
                 dest,
                 progress=lambda received, total: w.progress.emit(received, total),
                 cancelled=lambda: w.cancel_requested,
-            ),
-            self,
+            )
         )
         worker.progress.connect(self._on_progress)
         worker.succeeded.connect(self._on_downloaded)
@@ -193,18 +217,30 @@ class UpdateManager(QObject):
             self._progress = None
 
     def _on_download_failed(self, error: str) -> None:
+        self._download_worker = None
         self._close_progress()
         if error != "Download cancelled.":
             QMessageBox.warning(self.main, "Update failed", error)
 
     def _on_downloaded(self, path: str) -> None:
+        worker, self._download_worker = self._download_worker, None
         self._close_progress()
+        if worker is None or worker.cancel_requested:
+            # Cancelled after the last chunk arrived: honor it.
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return
         try:
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            subprocess.Popen([path, *INSTALLER_ARGS], close_fds=True, creationflags=flags)  # noqa: S603
+            # A hidden console, not DETACHED_PROCESS: PowerShell won't run
+            # at all without a console. New process group so it outlives us.
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen(  # noqa: S603 - fixed command, our own installer path
+                installer_launch_command(os.getpid(), path), close_fds=True, creationflags=flags
+            )
         except OSError as exc:
             QMessageBox.warning(self.main, "Update failed", f"Couldn't start the installer:\n{exc}")
             return
-        # The installer waits for us to exit (and closes us if needed), then
-        # reopens the app once the new version is in place.
+        # The helper starts setup once we've exited; setup reopens the app.
         self.main.quit_app()

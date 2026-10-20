@@ -84,6 +84,9 @@ def build_exe(version: str) -> Path:
         "--icon", str(ASSETS / "icon.ico"),
         "--version-file", str(version_file),
         "--add-data", f"{ASSETS}{os.pathsep}wyze_print_monitor/assets",
+        # wyzeapy loads its Wyze CA bundle (wyze_api_ca.pem) from beside its
+        # code at login; data files aren't collected unless asked for.
+        "--collect-data", "wyzeapy",
         # keyring finds its OS backends by entry point, which freezing loses.
         "--collect-submodules", "keyring.backends",
         "--hidden-import", "win32ctypes.core",

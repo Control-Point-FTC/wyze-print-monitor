@@ -12,6 +12,7 @@ tested; the UI (``ui.update_ui``) runs these calls off the GUI thread.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -28,6 +29,9 @@ LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/lates
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 INSTALLER_PATTERN = re.compile(r"^WyzePrintMonitor-.*-setup\.exe$", re.IGNORECASE)
 USER_AGENT = f"WyzePrintMonitor/{__version__}"
+# Inno Setup flags: no wizard pages, no prompts, close the app if still open.
+INSTALLER_ARGS = ("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS")
+EXIT_WAIT_SECONDS = 120
 
 
 class UpdateError(Exception):
@@ -164,3 +168,26 @@ def _remove(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
+
+
+def installer_launch_command(pid: int, installer: str) -> list[str]:
+    """A hidden PowerShell helper that waits for process ``pid`` (this app)
+    to exit, then runs the installer silently.
+
+    Starting setup while the app is still shutting down would let Inno
+    Setup's AppMutex check see it running and, with prompts suppressed,
+    cancel the update. The script is passed base64-encoded, so no path can
+    break its quoting.
+    """
+    quoted = installer.replace("'", "''")
+    args = ",".join(f"'{a}'" for a in INSTALLER_ARGS)
+    script = (
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        f"Wait-Process -Id {int(pid)} -Timeout {EXIT_WAIT_SECONDS}\n"
+        f"Start-Process -FilePath '{quoted}' -ArgumentList {args}\n"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return [
+        "powershell.exe", "-NoProfile", "-NonInteractive",
+        "-WindowStyle", "Hidden", "-EncodedCommand", encoded,
+    ]

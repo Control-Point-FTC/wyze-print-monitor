@@ -106,7 +106,7 @@ are remembered. Double-click a value to reset it, or **Reset all**.
 
 ### Snapshots, recordings, timelapses
 
-Saved to `Pictures\Wyze Print Monitor` and `Videos\Wyze Print Monitor` by
+Saved to `Pictures\wyze-print-monitor` and `Videos\wyze-print-monitor` by
 default (change in Settings). A timelapse grabs a frame every N seconds
 (Settings → *Timelapse interval*) and is compiled into an MP4 when you stop
 it.

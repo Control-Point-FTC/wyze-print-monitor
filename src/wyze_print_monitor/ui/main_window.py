@@ -1122,6 +1122,6 @@ class MainWindow(QMainWindow):
             reader.request_stop()
             reader.wait()
         self._retired_readers.clear()
-        self.update_manager.wait()
+        self.update_manager.shutdown()
         self.runner.stop()
         save_settings(self.settings)
