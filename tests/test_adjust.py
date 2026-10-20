@@ -91,3 +91,22 @@ def test_from_dict_clamps_and_ignores_garbage():
 def test_round_trips_through_dict():
     adj = ImageAdjustments(brightness=10, exposure=-0.5, rotation=270, flip_v=True, zoom=1.5, pan_y=-0.3)
     assert ImageAdjustments.from_dict(adj.to_dict()) == adj
+
+
+def test_non_finite_saved_values_fall_back_to_defaults():
+    """A hand-edited NaN/inf must not survive into the UI (it crashed startup)."""
+    adj = ImageAdjustments.from_dict({"gamma": "nan", "exposure": float("inf"), "zoom": "-inf", "brightness": 20})
+    assert adj.gamma == 1.0 and adj.exposure == 0.0 and adj.zoom == 1.0
+    assert adj.brightness == 20
+
+
+def test_fit_frame_letterboxes_instead_of_stretching():
+    from wyze_print_monitor.adjust import fit_frame
+
+    portrait = np.full((1920, 1080, 3), 200, np.uint8)  # rotated 90°
+    out = fit_frame(portrait, (1920, 1080))
+    assert out.shape == (1080, 1920, 3)
+    assert out[:, :300].max() == 0 and out[:, -300:].max() == 0  # black side bars
+    assert out[540, 960].min() == 200  # picture in the middle, not stretched
+    same = _frame(w=1920, h=1080)
+    assert fit_frame(same, (1920, 1080)) is same

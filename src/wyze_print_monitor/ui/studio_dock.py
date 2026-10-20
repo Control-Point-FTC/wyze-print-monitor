@@ -53,7 +53,7 @@ from .icons import (
     ICON_SETTINGS,
     ICON_TIMER,
     ICON_WINDOW,
-    glyph_icon,
+    tool_button,
 )
 from .styles import (
     APP_BG,
@@ -158,15 +158,7 @@ def _set_chip(label: QLabel, text: str, bg: str, fg: str = "#ffffff") -> None:
 
 
 def _tool(glyph: str, text: str, tip: str, checkable: bool = False) -> QToolButton:
-    button = QToolButton()
-    button.setIcon(glyph_icon(glyph))
-    button.setIconSize(QSize(16, 16))
-    button.setText(text)
-    button.setToolTip(tip)
-    button.setCheckable(checkable)
-    button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if text else Qt.ToolButtonIconOnly)
-    button.setCursor(Qt.PointingHandCursor)
-    return button
+    return tool_button(glyph, text, tip, checkable)
 
 
 def _header(title: str) -> tuple[QWidget, QHBoxLayout]:

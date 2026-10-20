@@ -12,6 +12,8 @@ import time
 import cv2
 import numpy as np
 
+from .adjust import fit_frame
+
 
 class TimelapseCollector:
     """Saves periodic JPEG snapshots of BGR frames into ``frames_dir``."""
@@ -87,8 +89,8 @@ def compile_timelapse(
             frame = cv2.imread(path)
             if frame is None:
                 continue
-            if frame.shape[:2] != (height, width):
-                frame = cv2.resize(frame, (width, height))
+            # Rotation may change between captures: letterbox, don't stretch.
+            frame = fit_frame(frame, (width, height))
             writer.write(frame)
             written += 1
     finally:

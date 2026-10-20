@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
-from .adjust import IDENTITY, ImageAdjustments, apply_adjustments
+from .adjust import IDENTITY, ImageAdjustments, apply_adjustments, fit_frame
 
 # Every blocking FFmpeg call is bounded so stop() can always join the thread.
 OPEN_TIMEOUT_MS = 5000
@@ -186,11 +186,11 @@ class ClipRecorder:
                     "(folder unwritable or mp4v encoder unavailable)."
                 )
             self._size = (w, h)
-        # If the stream resolution changed mid-recording (e.g. RTSP URL
-        # switched), resize into the original frame size instead of dropping.
+        # If the frame shape changed mid-recording (rotated 90° in the
+        # picture settings, RTSP URL switched), letterbox it into the clip's
+        # fixed size instead of dropping or stretching it.
         assert self._size is not None
-        if (frame.shape[1], frame.shape[0]) != self._size:
-            frame = cv2.resize(frame, self._size)
+        frame = fit_frame(frame, self._size)
         self._writer.write(frame)
         self.frames_written += 1
 

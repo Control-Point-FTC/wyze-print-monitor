@@ -50,7 +50,7 @@ from ..config import (
 from ..timelapse import TimelapseCollector, compile_timelapse
 from ..wyze_control import CameraInfo, CameraState, WyzeController
 from .adjust_panel import ImageAdjustPanel
-from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, glyph_icon
+from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
 from .settings_dialog import SettingsDialog, forget_secrets
 
 RIGHT_COLUMN_WIDTH = 380
@@ -192,15 +192,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _tool_button(self, glyph: str, text: str, tip: str, checkable: bool = False) -> QToolButton:
-        button = QToolButton()
-        button.setIcon(glyph_icon(glyph))
-        button.setIconSize(QSize(16, 16))
-        button.setText(text)
-        button.setToolTip(tip)
-        button.setCheckable(checkable)
-        button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if text else Qt.ToolButtonIconOnly)
-        button.setCursor(Qt.PointingHandCursor)
-        return button
+        return tool_button(glyph, text, tip, checkable)
 
     def _build_center(self) -> QVBoxLayout:
         column = QVBoxLayout()

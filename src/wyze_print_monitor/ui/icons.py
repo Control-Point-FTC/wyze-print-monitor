@@ -51,3 +51,39 @@ def glyph_icon(glyph: str, color: str = "#e6e7e9", size: int = 16, mirror: bool 
     painter.drawText(QRect(0, 0, size, size), Qt.AlignCenter, glyph)
     painter.end()
     return QIcon(pix)
+
+
+# Shown instead when the icon font is missing (Linux/macOS), so an
+# icon-only button never renders blank.
+FALLBACK_TEXT = {
+    ICON_CAMERA: "Snapshot",
+    ICON_RECORD: "Record",
+    ICON_TIMER: "Timelapse",
+    ICON_FOLDER: "Folders",
+    ICON_FULLSCREEN: "Fullscreen",
+    ICON_WINDOW: "Window",
+    ICON_SETTINGS: "Settings",
+    ICON_ADJUST: "Adjust",
+}
+
+
+def tool_button(glyph: str, text: str, tip: str, checkable: bool = False):
+    """A flat toolbar button: icon (+ optional text), or text alone when the
+    icon font isn't available."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QToolButton
+
+    button = QToolButton()
+    icon = glyph_icon(glyph)
+    if icon.isNull():
+        button.setText(text or FALLBACK_TEXT.get(glyph, tip))
+        button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+    else:
+        button.setIcon(icon)
+        button.setIconSize(QSize(16, 16))
+        button.setText(text)
+        button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if text else Qt.ToolButtonIconOnly)
+    button.setToolTip(tip)
+    button.setCheckable(checkable)
+    button.setCursor(Qt.PointingHandCursor)
+    return button

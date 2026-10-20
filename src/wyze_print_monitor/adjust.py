@@ -12,6 +12,7 @@ so the common case (tone tweaks only) costs one ``cv2.LUT`` per frame.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, fields
 from functools import lru_cache
 
@@ -75,7 +76,10 @@ class ImageAdjustments:
                     values[f.name] = rot if rot in ROTATIONS else 0
                 else:
                     lo, hi = LIMITS[f.name]
-                    num = min(max(float(raw), lo), hi)
+                    num = float(raw)
+                    if not math.isfinite(num):
+                        continue  # NaN/inf would survive min/max: use the default
+                    num = min(max(num, lo), hi)
                     values[f.name] = int(round(num)) if f.type in ("int", int) else num
             except (TypeError, ValueError):
                 continue
@@ -131,6 +135,24 @@ def _crop(frame: np.ndarray, zoom: float, pan_x: float, pan_y: float) -> np.ndar
     x0 = int((w - cw) / 2 * (1 + pan_x))
     y0 = int((h - ch) / 2 * (1 + pan_y))
     return frame[y0 : y0 + ch, x0 : x0 + cw]
+
+
+def fit_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Fit ``frame`` into ``size`` (width, height) keeping its proportions,
+    padding with black. A video file has one fixed size, so a frame whose
+    shape changed mid-capture (rotated 90°, new stream) is letterboxed
+    rather than stretched."""
+    width, height = size
+    h, w = frame.shape[:2]
+    if (w, h) == (width, height):
+        return frame
+    scale = min(width / w, height / h)
+    new_w, new_h = max(int(round(w * scale)), 1), max(int(round(h * scale)), 1)
+    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((height, width, 3), dtype=frame.dtype)
+    x0, y0 = (width - new_w) // 2, (height - new_h) // 2
+    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return canvas
 
 
 def apply_adjustments(frame: np.ndarray, adj: ImageAdjustments) -> np.ndarray:
