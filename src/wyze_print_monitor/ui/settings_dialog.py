@@ -209,6 +209,8 @@ class SettingsDialog(QDialog):
             self.test_button.setEnabled(True)
             self.test_button.setText("Connect && list cameras")
             if not ok:
+                if "SupersededLogin" in error:
+                    return  # a newer test login is already running
                 if "NeedTwoFactor" in error:
                     QMessageBox.information(
                         self,

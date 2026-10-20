@@ -73,6 +73,7 @@ TICK_MS = 200
 SEARCH_EVERY_S = 1.5   # how often to look for Studio while it isn't found
 RELOCATE_EVERY_S = 3.0  # re-find printer rows (Studio rebuilds them on refresh)
 HOLD_LAST_FRAME_S = 5.0  # keep the last picture through a reconnect this short
+CARDS_HIDDEN_GRACE_S = 1.0  # Studio's refresh blinks are far shorter than this
 
 
 # The panel's own sheet beats the app-wide DARK_QSS. Within it, equal
@@ -393,6 +394,7 @@ class StudioDock(QObject):
         self._placed: dict[int, tuple] = {}
         self._status_until = 0.0
         self._not_live_since: float | None = None
+        self._cards_hidden_since: float | None = None
         self._adjust_popup: AdjustPopup | None = None
 
         main.status_message.connect(self._on_status)
@@ -432,7 +434,8 @@ class StudioDock(QObject):
         now = time.monotonic()
         layout = self._layout
         if layout is None or not all(
-            win.is_window(h) for h in (layout.content, layout.monitor_card, layout.others_card)
+            win.is_window(h)
+            for h in (layout.host, layout.content, layout.monitor_card, layout.others_card)
         ):
             self.detach()  # Studio closed or rebuilt its Device tab
             self._layout = None
@@ -460,12 +463,22 @@ class StudioDock(QObject):
             self.detach()  # our children died with Studio's windows
             return
 
-        on_device_tab = (
-            not win.is_minimized(layout.top)
-            and win.is_visible(layout.monitor_card)
-            and win.is_visible(layout.others_card)
+        cards_shown = win.is_visible(layout.monitor_card) and win.is_visible(layout.others_card)
+        if cards_shown:
+            self._cards_hidden_since = None
+        elif self._cards_hidden_since is None:
+            self._cards_hidden_since = now
+        # Studio blinks its Device-tab content off for ~30-80 ms every few
+        # seconds. Treating that as "left the tab" hid our panels until the
+        # next tick and let Studio's own Monitor flash through. Only a
+        # sustained hide counts (on the Slice tab the whole page is hidden,
+        # which hides our panels with it anyway).
+        cards_gone = (
+            self._cards_hidden_since is not None
+            and now - self._cards_hidden_since >= CARDS_HIDDEN_GRACE_S
         )
-        if on_device_tab:
+        on_device_tab = not win.is_minimized(layout.top) and not cards_gone
+        if on_device_tab and cards_shown:
             # Sampling the screen is the slow part: every other tick is plenty
             # once we know the answer, but read every tick until we do.
             self._row_tick = (self._row_tick + 1) % 2
@@ -480,19 +493,23 @@ class StudioDock(QObject):
             self._attach(layout)
         if not self.attached:
             return
+        # The content area (our panels' lower sibling) and the cards must not
+        # paint over the panels sitting above them.
+        win.ensure_clips_siblings(layout.content)
         for panel, card in ((self.monitor, layout.monitor_card), (self.camera, layout.others_card)):
             win.ensure_clips_siblings(card)
             if want:
-                self._align(panel, card, layout.content)
+                self._align(panel, card, layout)
             if panel.isVisible() != want:
                 panel.setVisible(want)
         if want:
             self._sync()
 
-    def _align(self, panel: QWidget, card: int, content: int) -> None:
+    def _align(self, panel: QWidget, card: int, layout: win.StudioLayout) -> None:
         hwnd = int(panel.winId())
-        rect = win.rect_in_parent(card, content)
-        needs_raise = not win.is_above(hwnd, card)
+        rect = win.rect_in_parent(card, layout.host)
+        # Siblings of the content area: stay above it in z-order.
+        needs_raise = not win.is_above(hwnd, layout.content)
         if needs_raise or self._placed.get(hwnd) != rect:
             win.place(hwnd, rect, raise_to_top=needs_raise)
             self._placed[hwnd] = rect
@@ -502,16 +519,17 @@ class StudioDock(QObject):
         self.monitor = MonitorPanel()
         self.camera = CameraPanel()
         self._wire()
-        scale = win.dpi_scale(layout.content)
+        scale = win.dpi_scale(layout.host)
+        win.ensure_clips_siblings(layout.content)
         for panel, card in ((self.monitor, layout.monitor_card), (self.camera, layout.others_card)):
-            foreign = QWindow.fromWinId(layout.content)
+            foreign = QWindow.fromWinId(layout.host)
             self._foreign.append(foreign)
             panel.winId()  # create the native window before reparenting it
             panel.windowHandle().setParent(foreign)
-            x, y, w, h = win.rect_in_parent(card, layout.content)
+            x, y, w, h = win.rect_in_parent(card, layout.host)
             panel.setGeometry(round(x / scale), round(y / scale), round(w / scale), round(h / scale))
             panel.show()
-            self._align(panel, card, layout.content)
+            self._align(panel, card, layout)
         self.main.extra_video_labels.append(self.monitor.video)
         self._sync()
 

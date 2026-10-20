@@ -91,6 +91,10 @@ class StudioLayout:
     monitor_card: int
     others_card: int
     printer_rows: list[int] = field(default_factory=list)
+    # Where our panels are parented: the window *above* ``content``. Studio
+    # hides and re-shows ``content`` for a few dozen ms every ~3 s while it
+    # refreshes the Device tab; panels inside it blinked along with it.
+    host: int = 0
 
 
 # --------------------------------------------------------------------- Win32
@@ -222,7 +226,8 @@ if sys.platform == "win32":
         rows: list[int] = []
         if PRINTER_LIST_LABEL in labels:
             rows = _locate_printer_rows(labels[PRINTER_LIST_LABEL])
-        return StudioLayout(top, content, monitor_card, others_card, rows)
+        host = _GetParent(content) or content
+        return StudioLayout(top, content, monitor_card, others_card, rows, host)
 
     def _locate_printer_rows(list_label: int) -> list[int]:
         # Walk up from the "My Printer" label to the whole sidebar column.

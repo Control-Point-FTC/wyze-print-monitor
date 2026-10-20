@@ -60,3 +60,55 @@ def test_unreported_states_are_unknown_not_off():
     state = _camera_state(types.SimpleNamespace(on=True, siren=False, floodlight=False))
     assert state.motion is None
     assert state.notifications is None
+
+
+@pytest.mark.parametrize(
+    "error, retry, says",
+    [
+        # Real errors seen from Wyze / the app:
+        ("ContentTypeError: 429, message='Attempt to decode JSON with unexpected mimetype: ', "
+         "url='https://auth-prod.api.wyze.com/api/user/login'", True, "limiting"),
+        ("Unable to login with response from Wyze: {'description': 'Invalid credentials, please check "
+         "username, password, keyid or apikey', 'requestId': 'x', 'errorCode': 1000}", False, "rejected"),
+        ("ClientConnectorError: Cannot connect to host auth-prod.api.wyze.com:443", True, "reach"),
+        ("FileNotFoundError: [Errno 2] No such file or directory", False, "failed"),
+    ],
+)
+def test_login_errors_are_explained_and_only_transient_ones_retried(error, retry, says):
+    from wyze_print_monitor.wyze_control import describe_login_error
+
+    message, transient = describe_login_error(error)
+    assert transient is retry
+    assert says in message.lower()
+
+
+def test_rejected_login_is_never_retried_even_if_429_appears_elsewhere():
+    from wyze_print_monitor.wyze_control import describe_login_error
+
+    rejected = (
+        "Unable to login with response from Wyze: {'description': 'Invalid credentials, please check "
+        "username, password, keyid or apikey', 'requestId': 'ab-429-cd', 'errorCode': 1000}"
+    )
+    assert describe_login_error(rejected)[1] is False
+    # A stray 429 in an id is not a rate limit either.
+    assert describe_login_error("Unexpected response {'requestId': 'x-429-y', 'errorCode': 2001}")[1] is False
+
+
+def test_newest_login_wins_over_a_late_older_one():
+    """A background retry finishing after a newer login must not replace it."""
+    import asyncio
+
+    from wyze_print_monitor import wyze_control
+
+    class FakeClient:
+        async def login(self, *args):
+            return None
+
+    wyze_control.Wyzeapy = FakeClient
+    controller = wyze_control.WyzeController(runner=None)
+    controller._login_seq = 2  # a newer login (seq 2) has started
+    with pytest.raises(wyze_control.SupersededLogin):
+        asyncio.run(controller._do_login("e", "p", "k", "a", seq=1))
+    assert controller._client is None
+    assert asyncio.run(controller._do_login("e", "p", "k", "a", seq=2)) is True
+    assert isinstance(controller._client, FakeClient)
