@@ -87,6 +87,9 @@ def build_exe(version: str) -> Path:
         # wyzeapy loads its Wyze CA bundle (wyze_api_ca.pem) from beside its
         # code at login; data files aren't collected unless asked for.
         "--collect-data", "wyzeapy",
+        # Print watch: the AI runtime and PyAV ship native DLLs.
+        "--collect-binaries", "onnxruntime",
+        "--collect-submodules", "av",
         # keyring finds its OS backends by entry point, which freezing loses.
         "--collect-submodules", "keyring.backends",
         "--hidden-import", "win32ctypes.core",

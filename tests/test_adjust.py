@@ -137,3 +137,24 @@ def test_dragging_moves_the_picture_with_the_mouse(rotation, flip_h, flip_v):
             assert x1 > x0 + 5 and abs(y1 - y0) < 2
         else:
             assert y1 > y0 + 5 and abs(x1 - x0) < 2
+
+
+def test_auto_light_brightens_a_dark_picture_and_eases_in():
+    from wyze_print_monitor.adjust import AutoLight
+
+    dark = (np.random.default_rng(1).random((360, 640, 3)) * 60).astype(np.uint8)
+    auto = AutoLight()
+    first = auto.apply(dark)
+    assert first.mean() > dark.mean() * 2  # first frame: corrected at once
+    bright = np.full_like(dark, 200)
+    out = auto.apply(bright)  # not a measuring frame: same curve
+    assert out.shape == bright.shape
+
+
+def test_auto_light_is_not_a_manual_adjustment():
+    adj = ImageAdjustments(auto_light=True)
+    assert not adj.is_identity()
+    assert adj.manual().is_identity()
+    frame = np.full((10, 10, 3), 77, np.uint8)
+    assert apply_adjustments(frame, adj) is frame  # handled on the stream thread
+    assert ImageAdjustments.from_dict({"auto_light": 1}).auto_light is True

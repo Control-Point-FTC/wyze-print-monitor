@@ -9,10 +9,12 @@ back into the view. One code path, however many surfaces.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QAbstractButton, QMenu
 
 from ..adjust import LIMITS, screen_to_source_delta
@@ -83,6 +85,8 @@ class PanelBinder(QObject):
         main.status_message.connect(self._on_status)
         main.adjustments_changed.connect(self._on_adjustments)
         main.capture_saved.connect(self._on_capture_saved)
+        main.print_watch.alert_changed.connect(self.video.show_alert)
+        self.video.show_alert(main.print_watch.alert)
         self._on_adjustments(main.adjustments)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.sync)
@@ -98,6 +102,7 @@ class PanelBinder(QObject):
             (self.main.status_message, self._on_status),
             (self.main.adjustments_changed, self._on_adjustments),
             (self.main.capture_saved, self._on_capture_saved),
+            (self.main.print_watch.alert_changed, self.video.show_alert),
         ):
             try:
                 signal.disconnect(slot)
@@ -138,6 +143,13 @@ class PanelBinder(QObject):
         folders.addAction("Open video folder", lambda: m._open_folder(m.settings.resolved_video_dir()))
         v.folder_btn.setMenu(folders)
         _show_fill(v, bool(m.settings.video_fill))
+        watch = m.print_watch
+        v.alert.fine_btn.clicked.connect(watch.looks_fine)
+        v.alert.pause_btn.clicked.connect(lambda: watch.pause_print() or m.status_message.emit(
+            "Couldn't find Studio's Pause button."))
+        v.alert.resume_btn.clicked.connect(watch.resume_print)
+        v.alert.stop_btn.clicked.connect(lambda: watch.stop_print(v.window()))
+        v.alert.view_btn.clicked.connect(self._view_alert_snapshot)
 
         c.settings_btn.clicked.connect(m._open_settings)
         c.more_picture_btn.clicked.connect(self._open_adjust)
@@ -157,6 +169,11 @@ class PanelBinder(QObject):
         c.camera_combo.activated.connect(m.camera_list.setCurrentRow)
         for name, (slider, _value) in c.quick_sliders.items():
             slider.valueChanged.connect(lambda value, n=name: self._on_quick_slider(n, value))
+
+    def _view_alert_snapshot(self) -> None:
+        alert = self.main.print_watch.alert
+        if alert is not None and alert.snapshot and os.path.exists(alert.snapshot):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(alert.snapshot))
 
     def _toggle_adjust(self) -> None:
         if self.camera.adjusting():
@@ -274,6 +291,14 @@ class PanelBinder(QObject):
             set_chip(v.timelapse_chip, "Compiling timelapse…", "#3a4f7a")
         else:
             set_chip(v.timelapse_chip, "")
+        watch_text = m.print_watch.status_text()
+        if watch_text:
+            word = watch_text.split(": ", 1)[-1]
+            risky = m.print_watch.risk >= 1 / 3 and word not in ("model not downloaded",)
+            set_chip(v.watch_chip, f"AI · {word}", "#7a3a2f" if risky else "#2f4a5a")
+            v.watch_chip.setToolTip(watch_text)
+        else:
+            set_chip(v.watch_chip, "")
         v.set_live(state == "live")
         _show_fill(v, bool(m.settings.video_fill))
 

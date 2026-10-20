@@ -63,6 +63,15 @@ class ImageAdjustPanel(QWidget):
         layout.setSpacing(6)
 
         layout.addWidget(_section("PICTURE"))
+        self.auto_light_btn = QPushButton("Auto lighting")
+        self.auto_light_btn.setObjectName("plain")
+        self.auto_light_btn.setCheckable(True)
+        self.auto_light_btn.setToolTip(
+            "Keep the picture well exposed as the room gets brighter or darker.\n"
+            "The sliders below still fine-tune on top."
+        )
+        self.auto_light_btn.clicked.connect(self._changed)
+        layout.addWidget(self.auto_light_btn)
         layout.addLayout(self._slider_grid(TONE_ROWS))
 
         layout.addSpacing(4)
@@ -142,6 +151,7 @@ class ImageAdjustPanel(QWidget):
             **values,
             flip_h=self.flip_h_btn.isChecked(),
             flip_v=self.flip_v_btn.isChecked(),
+            auto_light=self.auto_light_btn.isChecked(),
         )
 
     def refresh(self, adj: ImageAdjustments) -> None:
@@ -152,7 +162,11 @@ class ImageAdjustPanel(QWidget):
             slider.setValue(round(number * scale))
             slider.blockSignals(False)
             value.setText(fmt.format(number))
-        for button, checked in ((self.flip_h_btn, adj.flip_h), (self.flip_v_btn, adj.flip_v)):
+        for button, checked in (
+            (self.flip_h_btn, adj.flip_h),
+            (self.flip_v_btn, adj.flip_v),
+            (self.auto_light_btn, adj.auto_light),
+        ):
             button.blockSignals(True)
             button.setChecked(checked)
             button.blockSignals(False)

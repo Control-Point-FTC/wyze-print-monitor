@@ -132,7 +132,19 @@ def _make_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon | None:
             8000,
         )
     )
-    tray.messageClicked.connect(window.update_manager.install)
+    # Clicking a notification does what it was about: install an update, or
+    # bring up the window to look at a print-watch alert.
+    last = {"kind": ""}
+    window.update_manager.available.connect(lambda _info: last.update(kind="update"))
+
+    def print_alert(title: str, message: str) -> None:
+        last["kind"] = "alert"
+        tray.showMessage(title, message, QSystemTrayIcon.Warning, 15000)
+
+    window.print_watch.notify.connect(print_alert)
+    tray.messageClicked.connect(
+        lambda: window.update_manager.install() if last["kind"] == "update" else window.show_window()
+    )
     return tray
 
 
@@ -141,7 +153,8 @@ def self_test(report_path: str) -> int:
 
     ``WyzePrintMonitor.exe --self-test report.txt`` writes what it found and
     exits 0 only if video decoding, the OS credential store, Qt networking,
-    the Wyze client and the app icon are all usable. Run by the release
+    the Wyze client, the print watch's AI/audio runtimes and the app icon
+    are all usable. Run by the release
     workflow on every build.
     """
     from . import __version__
@@ -187,7 +200,20 @@ def self_test(report_path: str) -> int:
         get_ssl_context()
         return "client + Wyze TLS certificates OK", True
 
+    def ai_runtime():
+        import onnxruntime as ort
+
+        providers = ort.get_available_providers()  # loads the native runtime
+        return f"onnxruntime {ort.__version__}, {', '.join(providers)}", "CPUExecutionProvider" in providers
+
+    def audio():
+        import av
+
+        return f"PyAV {av.__version__}", True
+
     check("OpenCV", opencv)
+    check("AI runtime (print watch)", ai_runtime)
+    check("Audio (sound alerts)", audio)
     check("Credential store", credentials)
     check("Qt", qt)
     check("Wyze client", wyze)

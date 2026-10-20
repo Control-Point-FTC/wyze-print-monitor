@@ -61,6 +61,7 @@ from .. import __version__
 from .binder import PanelBinder
 from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
 from .settings_dialog import SettingsDialog, forget_secrets
+from .print_watch_ui import PrintWatch
 from .update_ui import UpdateManager
 from .views import VIEWS_QSS, CameraPanel, VideoView
 
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self._login_retry_timer.timeout.connect(lambda: self._on_connect(silent=True))
 
         self.update_manager = UpdateManager(self)
+        self.print_watch = PrintWatch(self)
         self.update_manager.available.connect(self._on_update_available)
 
         self._build_ui()
@@ -561,6 +563,7 @@ class MainWindow(QMainWindow):
         self._reader.recording_failed.connect(self._on_recording_failed)
         self._reader.quality_changed.connect(self._on_quality_changed)
         self._reader.start()
+        self.print_watch.set_stream(effective_rtsp_url(self.settings))
 
     def _stop_stream(self) -> None:
         if self._reader is not None:
@@ -1190,6 +1193,8 @@ class MainWindow(QMainWindow):
                 # URL was cleared: stop the old camera instead of letting it
                 # keep streaming (and recording) with the stale URL.
                 self._stop_stream()
+                self.print_watch.set_stream(None)
+            self.print_watch.apply_settings()
             # The dialog may have completed a fresh login, in which case the
             # main window's camera list is still empty — repopulate it so the
             # controls don't stay disabled after setup.
@@ -1272,5 +1277,6 @@ class MainWindow(QMainWindow):
             reader.wait()
         self._retired_readers.clear()
         self.update_manager.shutdown()
+        self.print_watch.shutdown()
         self.runner.stop()
         save_settings(self.settings)

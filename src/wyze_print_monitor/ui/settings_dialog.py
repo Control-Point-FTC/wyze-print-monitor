@@ -1,4 +1,5 @@
-"""Settings dialog: RTSP URL, Wyze credentials, camera picker, folders."""
+"""Settings dialog: RTSP URL, Wyze credentials, camera picker, folders,
+and the print watch (AI failure detection)."""
 from __future__ import annotations
 
 import sys
@@ -15,13 +16,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import autostart
+from .. import autostart, failure_model
 from ..config import (
     SECRET_API_KEY,
     SECRET_KEY_ID,
@@ -51,7 +54,8 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.resize(480, 520)
+        self.resize(500, 560)
+        self._watch = getattr(parent, "print_watch", None)
         self._settings = settings
         self._controller = controller
         self._cameras: list[CameraInfo] = []
@@ -182,12 +186,148 @@ class SettingsDialog(QDialog):
         form.addRow(self.updates_check)
         form.addRow("Printer with camera", self.dock_row_spin)
 
-        layout.addLayout(form)
+        tabs = QTabWidget()
+        general = QWidget()
+        general.setLayout(form)
+        tabs.addTab(general, "General")
+        tabs.addTab(self._build_watch_tab(settings), "Print watch")
+        layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    # ------------------------------------------------------------------ print watch
+    def _build_watch_tab(self, settings: Settings) -> QWidget:
+        page = QWidget()
+        column = QVBoxLayout(page)
+        intro = QLabel(
+            "Watches the camera for failed prints (spaghetti, blobs, parts knocked "
+            "loose) with an AI model that runs on this PC — no account, no cloud. "
+            "It checks one frame every 10 seconds, only while Studio shows a print "
+            "running."
+        )
+        intro.setWordWrap(True)
+        column.addWidget(intro)
+
+        self.model_label = QLabel()
+        self.model_label.setWordWrap(True)
+        column.addWidget(self.model_label)
+        model_row = QHBoxLayout()
+        self.download_btn = QPushButton(f"Download model ({failure_model.MODEL_SIZE // 1_000_000} MB)")
+        self.download_btn.clicked.connect(self._on_download)
+        self.cancel_download_btn = QPushButton("Cancel")
+        self.cancel_download_btn.clicked.connect(lambda: self._watch and self._watch.cancel_download())
+        self.remove_model_btn = QPushButton("Remove model")
+        self.remove_model_btn.clicked.connect(self._on_remove_model)
+        for button in (self.download_btn, self.cancel_download_btn, self.remove_model_btn):
+            model_row.addWidget(button)
+        model_row.addStretch(1)
+        column.addLayout(model_row)
+        self.download_bar = QProgressBar()
+        self.download_bar.setTextVisible(True)
+        column.addWidget(self.download_bar)
+        credit = QLabel(
+            'Model by <a href="https://www.obico.io">Obico</a> (formerly The Spaghetti '
+            f'Detective), <a href="{failure_model.MODEL_LICENSE_URL}">AGPL-3.0</a>. '
+            "It's downloaded straight from Obico and checked against its published checksum."
+        )
+        credit.setWordWrap(True)
+        credit.setOpenExternalLinks(True)
+        credit.setStyleSheet("color: gray; font-size: 11px;")
+        column.addWidget(credit)
+
+        watch_form = QFormLayout()
+        self.watch_check = QCheckBox("Watch prints for failures")
+        self.watch_check.setChecked(settings.ai_watch)
+        watch_form.addRow(self.watch_check)
+        self.auto_pause_check = QCheckBox("Pause the print in Studio when the AI is very sure")
+        self.auto_pause_check.setChecked(settings.ai_auto_pause)
+        self.auto_pause_check.setToolTip(
+            "Only after the failure signal holds for over 30 seconds. Less certain "
+            "problems only alert you. It never stops a print on its own."
+        )
+        watch_form.addRow(self.auto_pause_check)
+        self.sensitivity_combo = QComboBox()
+        for key, text in (("low", "Low — fewer alerts"), ("normal", "Normal"), ("high", "High — earlier alerts")):
+            self.sensitivity_combo.addItem(text, key)
+        index = self.sensitivity_combo.findData(settings.ai_sensitivity)
+        self.sensitivity_combo.setCurrentIndex(index if index >= 0 else 1)
+        watch_form.addRow("Sensitivity", self.sensitivity_combo)
+        self.sound_check = QCheckBox("Also alert me about unusual printer sounds")
+        self.sound_check.setChecked(settings.sound_alerts)
+        self.sound_check.setToolTip(
+            "Learns how this print normally sounds and alerts on grinding, clicking "
+            "or a loud bang. Sound alone never pauses."
+        )
+        watch_form.addRow(self.sound_check)
+        column.addLayout(watch_form)
+        column.addStretch(1)
+
+        self.watch_check.toggled.connect(self._refresh_watch)
+        if self._watch is not None:
+            self._watch.download_progress.connect(self._on_download_progress)
+            self._watch.download_finished.connect(self._on_download_finished)
+        self._refresh_watch()
+        return page
+
+    def _refresh_watch(self) -> None:
+        installed = failure_model.is_installed()
+        downloading = self._watch is not None and self._watch.downloading()
+        if downloading:
+            self.model_label.setText("Downloading the model…")
+        elif installed:
+            self.model_label.setText("✓ Model installed.")
+        else:
+            self.model_label.setText("The model isn't downloaded yet — it's needed before watching can start.")
+        self.download_btn.setVisible(not installed and not downloading)
+        self.download_btn.setEnabled(self._watch is not None)
+        self.cancel_download_btn.setVisible(downloading)
+        self.remove_model_btn.setVisible(installed and not downloading)
+        self.download_bar.setVisible(downloading)
+        on = self.watch_check.isChecked()
+        for widget in (self.auto_pause_check, self.sensitivity_combo, self.sound_check):
+            widget.setEnabled(on)
+
+    def _on_download(self) -> None:
+        if self._watch is None:
+            return
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setValue(0)
+        self._watch.download_model()
+        self._refresh_watch()
+
+    def _on_download_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.download_bar.setValue(int(done * 100 / total))
+            self.download_bar.setFormat(f"{done / 1e6:.0f} / {total / 1e6:.0f} MB")
+
+    def _on_download_finished(self, ok: bool, message: str) -> None:
+        self._refresh_watch()
+        self.model_label.setText(("✓ " if ok else "") + message)
+        if ok and not self.watch_check.isChecked():
+            self.watch_check.setChecked(True)  # downloaded it to use it
+
+    def _on_remove_model(self) -> None:
+        if self._watch is None:
+            return
+        answer = QMessageBox.question(self, "Remove model", "Delete the downloaded AI model (~200 MB)?")
+        if answer == QMessageBox.Yes:
+            self._watch.remove_model()
+            self._refresh_watch()
+
+    def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        if self._watch is not None:
+            for signal, slot in (
+                (self._watch.download_progress, self._on_download_progress),
+                (self._watch.download_finished, self._on_download_finished),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+        super().done(result)
 
     # ------------------------------------------------------------------ slots
     def _browse(self, edit: QLineEdit) -> None:
@@ -276,6 +416,10 @@ class SettingsDialog(QDialog):
         s.stream_quality = self.quality_combo.currentData()
         s.check_updates = self.updates_check.isChecked()
         s.dock_printer_row = self.dock_row_spin.value()
+        s.ai_watch = self.watch_check.isChecked()
+        s.ai_auto_pause = self.auto_pause_check.isChecked()
+        s.ai_sensitivity = self.sensitivity_combo.currentData()
+        s.sound_alerts = self.sound_check.isChecked()
         mac =self.camera_combo.currentData()
         if mac:
             s.camera_mac = mac

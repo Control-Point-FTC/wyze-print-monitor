@@ -24,7 +24,8 @@
 eufyMake Studio's Device tab can only show a printer's *built-in* camera.
 Wyze Print Monitor puts the live feed from a Wyze Cam V3 mounted on your
 printer **into that tab** — plus full camera controls, snapshots, recordings,
-print timelapses and picture adjustments.
+print timelapses, picture adjustments, and a local **AI print watch** that
+alerts you to failed prints (and pauses them when it's sure).
 
 ![The Wyze feed and controls docked in eufyMake Studio](docs/screenshots/studio-dock.png)
 
@@ -147,6 +148,35 @@ and digital zoom with pan. Adjustments apply to the live view *and* to
 snapshots, recordings and timelapses, and are remembered. Double-click a
 value to reset it, or **Reset all**.
 
+**Auto lighting** keeps the picture well exposed as the room gets brighter
+or darker (it eases changes in, so the image doesn't pump); the sliders
+still fine-tune on top.
+
+### Print watch (AI failure detection)
+
+Settings → **Print watch** → *Download model* (≈200 MB, once), then turn on
+*Watch prints for failures*. It runs entirely on your PC — no account, no
+cloud, no subscription — using [Obico](https://www.obico.io)'s open
+failure-detection model.
+
+- **Alerts** when something *might* be wrong (spaghetti, a blob, a part
+  knocked loose): a banner on the video, a Windows notification, a beep, and
+  a snapshot with the suspect area outlined (saved with your snapshots).
+- **Pauses** the print through Studio's own Pause button only when it's
+  *very* sure — the failure signal has to hold for over 30 seconds. You can
+  turn auto-pause off.
+- **Never stops** a print by itself: *Stop print…* is a button on the alert,
+  and it asks first.
+- **Unusual sounds** (optional): it learns how the current print normally
+  sounds from the camera's microphone and alerts on grinding, clicking or a
+  loud bang. Sound only ever alerts.
+
+It checks one frame every 10 seconds, only while Studio shows a print
+running — about 1% of a modern CPU. *Looks fine* on an alert keeps it quiet
+for 30 minutes. Single frames are never trusted: like Obico, it compares a
+smoothed score with what's normal for your camera, and stays quiet for the
+first few minutes of each print.
+
 ### Snapshots, recordings, timelapses
 
 Saved to `Pictures\wyze-print-monitor` and `Videos\wyze-print-monitor` by
@@ -208,3 +238,7 @@ regenerates icons and installer art from the logo).
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+The print-watch model is not part of this app: it's downloaded separately,
+from Obico, and is licensed by Obico under
+[AGPL-3.0](https://github.com/TheSpaghettiDetective/obico-server/blob/release/LICENSE).

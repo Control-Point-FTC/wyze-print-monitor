@@ -62,3 +62,14 @@ def test_pick_printer_rows_filters_and_sorts():
         (134814, (241, 126, 19, 19)),    # refresh icon: too narrow
     ]
     assert pick_printer_rows(candidates, sidebar, header_bottom) == [12979198, 75752]
+
+
+def test_classify_print_controls():
+    from wyze_print_monitor.studio_win32 import classify_control
+
+    assert classify_control("Pause") == "pause"
+    assert classify_control("&Resume") == "resume"
+    assert classify_control("  Stop  print ") == "stop"
+    assert classify_control("Abort") == "stop"
+    assert classify_control("Pause camera") is None
+    assert classify_control("") is None
