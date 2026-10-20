@@ -48,7 +48,13 @@ from ..config import (
     save_settings,
 )
 from ..timelapse import TimelapseCollector, compile_timelapse
-from ..wyze_control import CameraInfo, CameraState, WyzeController
+from ..wyze_control import (
+    LOGIN_RETRY_DELAYS_S,
+    CameraInfo,
+    CameraState,
+    WyzeController,
+    describe_login_error,
+)
 from .. import __version__
 from .adjust_panel import ImageAdjustPanel
 from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
@@ -122,6 +128,13 @@ class MainWindow(QMainWindow):
         self._save_adjust_timer.setSingleShot(True)
         self._save_adjust_timer.setInterval(600)
         self._save_adjust_timer.timeout.connect(lambda: save_settings(self.settings))
+
+        # Re-login after temporary failures (rate limit, network), see
+        # wyze_control.LOGIN_RETRY_DELAYS_S.
+        self._login_retries = 0
+        self._login_retry_timer = QTimer(self)
+        self._login_retry_timer.setSingleShot(True)
+        self._login_retry_timer.timeout.connect(lambda: self._on_connect(silent=True))
 
         self.update_manager = UpdateManager(self)
         self.update_manager.available.connect(self._on_update_available)
@@ -804,6 +817,10 @@ class MainWindow(QMainWindow):
                     "API key ID and API key first.",
                 )
             return
+        if not silent:
+            # A manual Connect starts over: drop any scheduled retry.
+            self._login_retry_timer.stop()
+            self._login_retries = 0
         self.conn_label.setText("Connecting to Wyze…")
         self.connect_btn.setEnabled(False)
 
@@ -812,11 +829,21 @@ class MainWindow(QMainWindow):
             if not ok:
                 if "NeedTwoFactor" in error:
                     self._ask_2fa()
+                    return
+                message, transient = describe_login_error(error)
+                if transient and self._login_retries < len(LOGIN_RETRY_DELAYS_S):
+                    delay = LOGIN_RETRY_DELAYS_S[self._login_retries]
+                    self._login_retries += 1
+                    self._login_retry_timer.start(delay * 1000)
+                    when = f"{delay // 60} min" if delay >= 60 else f"{delay} s"
+                    self.conn_label.setText(f"{message} Retrying in {when}.")
                 else:
-                    self.conn_label.setText("Login failed.")
-                    if not silent:
-                        QMessageBox.critical(self, "Wyze login failed", error)
+                    self.conn_label.setText(message)
+                if not silent:
+                    QMessageBox.critical(self, "Wyze login failed", f"{message}\n\nDetails: {error}")
                 return
+            self._login_retries = 0
+            self._login_retry_timer.stop()
             self._on_refresh_cameras()
 
         self.controller.login(email, password, key_id, api_key, done)

@@ -18,6 +18,32 @@ from wyzeapy.services.camera_service import CameraService
 from .async_runner import AsyncRunner, OnDone
 
 
+# Automatic re-login after a temporary failure (rate limit, network): 1, 5
+# and 15 minutes. Never for rejected credentials — repeated bad logins can
+# get a Wyze account locked.
+LOGIN_RETRY_DELAYS_S = (60, 300, 900)
+
+
+def describe_login_error(error: str) -> tuple[str, bool]:
+    """A user-facing reason for a failed Wyze login, and whether trying
+    again later can help (True) or the user has to fix something (False)."""
+    text = (error or "").lower()
+    if "429" in text or "too many" in text or "rate limit" in text:
+        return "Wyze is temporarily limiting logins (too many attempts).", True
+    if "invalid credentials" in text or "'errorcode': 1000" in text or "access denied" in text:
+        return "Wyze rejected the login. Check your email, password and API key in Settings.", False
+    if any(
+        marker in text
+        for marker in (
+            "cannot connect", "clientconnector", "timeout", "timed out", "name resolution",
+            "getaddrinfo", "network is unreachable", "connection reset", "server disconnected",
+            "502", "503", "504",
+        )
+    ):
+        return "Couldn't reach Wyze. Check the internet connection.", True
+    return f"Wyze login failed: {error.strip()[:140]}", False
+
+
 class NeedTwoFactor(Exception):
     """Raised (as an on_done error) when Wyze asks for a 2FA verification code."""
 

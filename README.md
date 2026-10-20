@@ -125,7 +125,7 @@ in Settings.
 | Problem | Fix |
 | --- | --- |
 | Video says *Camera stream unavailable* / keeps reconnecting | Check the RTSP URL (username, password, `rtsps`). If the Wyze app shows the camera as offline, unplug it for 10 seconds. |
-| *Login failed: 429* | Wyze is rate-limiting logins. Wait ~30 minutes, then try once. |
+| *Wyze is temporarily limiting logins* | Too many login attempts. The app retries by itself after 1, 5 and 15 minutes; avoid clicking Connect repeatedly. |
 | *Forbidden control character* on login | Fixed in 1.0 — re-paste the API key if you're on an older build. |
 | Panels don't show inside Studio | Studio must be on the **Device** tab with the camera's printer selected, and its UI in English. Check Settings → *Show inside eufyMake Studio's Device tab*. |
 | *Windows protected your PC* | Click **More info → Run anyway** (unsigned installer). |

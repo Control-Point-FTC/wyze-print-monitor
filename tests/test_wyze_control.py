@@ -60,3 +60,23 @@ def test_unreported_states_are_unknown_not_off():
     state = _camera_state(types.SimpleNamespace(on=True, siren=False, floodlight=False))
     assert state.motion is None
     assert state.notifications is None
+
+
+@pytest.mark.parametrize(
+    "error, retry, says",
+    [
+        # Real errors seen from Wyze / the app:
+        ("ContentTypeError: 429, message='Attempt to decode JSON with unexpected mimetype: ', "
+         "url='https://auth-prod.api.wyze.com/api/user/login'", True, "limiting"),
+        ("Unable to login with response from Wyze: {'description': 'Invalid credentials, please check "
+         "username, password, keyid or apikey', 'requestId': 'x', 'errorCode': 1000}", False, "rejected"),
+        ("ClientConnectorError: Cannot connect to host auth-prod.api.wyze.com:443", True, "reach"),
+        ("FileNotFoundError: [Errno 2] No such file or directory", False, "failed"),
+    ],
+)
+def test_login_errors_are_explained_and_only_transient_ones_retried(error, retry, says):
+    from wyze_print_monitor.wyze_control import describe_login_error
+
+    message, transient = describe_login_error(error)
+    assert transient is retry
+    assert says in message.lower()

@@ -32,21 +32,27 @@ VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
+; Short, friendly flow: Welcome -> shortcut option -> install -> done
+; (no "for me / all users" prompt, folder, license or "ready" pages).
+DisableWelcomePage=no
+DisableDirPage=yes
 DisableProgramGroupPage=yes
+DisableReadyPage=yes
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-LicenseFile=..\LICENSE
 OutputDir=..\build\installer
 OutputBaseFilename=WyzePrintMonitor-{#AppVersion}-setup
 SetupIconFile=..\src\wyze_print_monitor\assets\icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
-WizardStyle=modern
-WizardImageFile=wizard-large-164.bmp,wizard-large-328.bmp
-WizardSmallImageFile=wizard-small-55.bmp,wizard-small-69.bmp,wizard-small-110.bmp
+; Windows 11 look, light or dark following the user's Windows theme.
+WizardStyle=modern dynamic windows11
+; Transparent PNGs from packaging/make_artwork.py for 100-250% DPI; Setup
+; picks the size that best fits the screen.
+WizardImageFile=wizard-side-202.png,wizard-side-269.png,wizard-side-336.png,wizard-side-430.png,wizard-side-534.png
+WizardSmallImageFile=wizard-logo-58.png,wizard-logo-73.png,wizard-logo-87.png,wizard-logo-116.png,wizard-logo-145.png
 Compression=lzma2/max
 SolidCompression=yes
 ; Close a running copy before replacing its files (and on uninstall).
@@ -57,11 +63,16 @@ RestartApplications=no
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Messages]
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nWatch and control the Wyze Cam on your 3D printer (live view, snapshots, recordings and timelapses) right inside eufyMake Studio.%n%nNo admin rights needed.
+FinishedLabel=[name] is installed. Find it any time in the Start menu: just search for "Wyze".
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "..\build\dist\WyzePrintMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [InstallDelete]
 ; Updates replace the whole app folder, so files dropped by a newer
