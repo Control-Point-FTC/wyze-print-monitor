@@ -1,10 +1,15 @@
 """Application entry point."""
 from __future__ import annotations
 
+import getpass
+import os
 import sys
+import time
 from pathlib import Path
 
+from PySide6.QtCore import QLockFile, QStandardPaths
 from PySide6.QtGui import QIcon
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .ui.main_window import MainWindow
@@ -13,6 +18,7 @@ from .ui.styles import DARK_QSS
 
 ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
 APP_USER_MODEL_ID = "ControlPointFTC.WyzePrintMonitor"
+INSTALLER_MUTEX = "WyzePrintMonitorRunning"  # must match AppMutex in installer/*.iss
 
 
 def app_icon() -> QIcon:
@@ -37,6 +43,69 @@ def _set_windows_app_id() -> None:
         pass
 
 
+def _instance_name() -> str:
+    return f"WyzePrintMonitor-{getpass.getuser()}"
+
+
+def _claim_single_instance() -> QLockFile | None:
+    """Atomically claim "the running copy". Returns the held lock, or None
+    if another copy holds it. Must happen before any window or camera work,
+    so two near-simultaneous launches can't both get through. A lock left
+    by a crashed copy is detected as stale and taken over."""
+    path = os.path.join(QStandardPaths.writableLocation(QStandardPaths.TempLocation), _instance_name() + ".lock")
+    lock = QLockFile(path)
+    lock.setStaleLockTime(0)  # stale = its owner process is gone
+    return lock if lock.tryLock(0) else None
+
+
+def _signal_running_instance(attempts: int = 20) -> bool:
+    """Ask the running copy to come forward. It may still be starting up
+    (lock taken, not listening yet), so retry for a few seconds."""
+    for _ in range(attempts):
+        socket = QLocalSocket()
+        socket.connectToServer(_instance_name())
+        if socket.waitForConnected(300):
+            socket.write(b"show")
+            socket.flush()
+            socket.waitForBytesWritten(500)
+            socket.disconnectFromServer()
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _listen_for_other_launches(app: QApplication, window: MainWindow) -> QLocalServer:
+    """Opening the app again (Start menu, desktop icon) brings this one up
+    instead of starting a second copy that would fight over the camera."""
+    server = QLocalServer(app)
+
+    def on_connection() -> None:
+        connection = server.nextPendingConnection()
+        if connection is not None:
+            connection.disconnected.connect(connection.deleteLater)
+        window.show_window()
+
+    server.newConnection.connect(on_connection)
+    if not server.listen(_instance_name()):
+        # We hold the instance lock, so any existing endpoint is a leftover
+        # from a crashed copy: clear it and try once more.
+        QLocalServer.removeServer(_instance_name())
+        if not server.listen(_instance_name()):
+            print(f"Single-instance listener unavailable: {server.errorString()}", file=sys.stderr)
+    return server
+
+
+def _hold_installer_mutex():
+    """A named mutex the installer's AppMutex checks, so setup/uninstall
+    knows the app is running and closes it first."""
+    try:
+        import ctypes
+
+        return ctypes.windll.kernel32.CreateMutexW(None, False, INSTALLER_MUTEX)
+    except (AttributeError, OSError):
+        return None
+
+
 def _make_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon | None:
     if not QSystemTrayIcon.isSystemTrayAvailable():
         return None
@@ -55,10 +124,85 @@ def _make_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon | None:
     )
     tray._menu = menu  # keep the menu alive with the tray
     tray.show()
+    window.update_manager.available.connect(
+        lambda info: tray.showMessage(
+            "Update available",
+            f"Wyze Print Monitor {info.version} is ready to install. Click Update in the app.",
+            QSystemTrayIcon.Information,
+            8000,
+        )
+    )
+    tray.messageClicked.connect(window.update_manager.install)
     return tray
 
 
+def self_test(report_path: str) -> int:
+    """Check a packaged build can do its job, without opening a window.
+
+    ``WyzePrintMonitor.exe --self-test report.txt`` writes what it found and
+    exits 0 only if video decoding, the OS credential store, Qt networking,
+    the Wyze client and the app icon are all usable. Run by the release
+    workflow on every build.
+    """
+    from . import __version__
+
+    lines = [f"Wyze Print Monitor {__version__}", f"frozen: {bool(getattr(sys, 'frozen', False))}"]
+    ok = True
+
+    def check(label: str, fn) -> None:
+        nonlocal ok
+        try:
+            result, good = fn()
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            result, good = f"{type(exc).__name__}: {exc}", False
+        lines.append(f"{'OK  ' if good else 'FAIL'} {label}: {result}")
+        ok = ok and good
+
+    def opencv():
+        import cv2
+
+        has_ffmpeg = cv2.videoio_registry.hasBackend(cv2.CAP_FFMPEG)
+        return f"{cv2.__version__}, FFmpeg backend {'present' if has_ffmpeg else 'MISSING'}", has_ffmpeg
+
+    def credentials():
+        import keyring
+
+        backend = keyring.get_keyring()
+        name = f"{type(backend).__module__}.{type(backend).__name__}"
+        return name, "fail" not in name and "null" not in name.lower()
+
+    def qt():
+        import PySide6
+        from PySide6.QtNetwork import QLocalServer  # noqa: F401
+
+        return PySide6.__version__, True
+
+    def wyze():
+        from wyzeapy.wyze_auth_lib import get_ssl_context
+
+        from .wyze_control import WyzeController  # noqa: F401
+
+        # Builds the exact TLS context login uses: needs certifi's bundle and
+        # wyzeapy's own wyze_api_ca.pem to be packaged.
+        get_ssl_context()
+        return "client + Wyze TLS certificates OK", True
+
+    check("OpenCV", opencv)
+    check("Credential store", credentials)
+    check("Qt", qt)
+    check("Wyze client", wyze)
+    check("App icon", lambda: (str(ICON_PATH), ICON_PATH.is_file()))
+    lines.append("RESULT: " + ("PASS" if ok else "FAIL"))
+    with open(report_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return 0 if ok else 1
+
+
 def main() -> int:
+    if "--self-test" in sys.argv:
+        index = sys.argv.index("--self-test")
+        report = sys.argv[index + 1] if len(sys.argv) > index + 1 else "self-test.txt"
+        return self_test(report)
     if sys.platform == "win32":
         _set_windows_app_id()  # must happen before any window exists
     app = QApplication(sys.argv)
@@ -66,7 +210,13 @@ def main() -> int:
     app.setOrganizationName("Control-Point-FTC")
     app.setWindowIcon(app_icon())
     app.setStyleSheet(DARK_QSS)
+    instance_lock = _claim_single_instance()
+    if instance_lock is None:
+        _signal_running_instance()
+        return 0
+    mutex = _hold_installer_mutex() if sys.platform == "win32" else None  # noqa: F841 - held for the app's lifetime
     window = MainWindow()
+    server = _listen_for_other_launches(app, window)  # noqa: F841 - kept alive by app parent
 
     dock = None
     if sys.platform == "win32":
@@ -82,7 +232,9 @@ def main() -> int:
         window._status("Showing the camera inside eufyMake Studio's Device tab.", 5000)
     else:
         window.show()
-    return app.exec()
+    code = app.exec()
+    instance_lock.unlock()
+    return code
 
 
 if __name__ == "__main__":

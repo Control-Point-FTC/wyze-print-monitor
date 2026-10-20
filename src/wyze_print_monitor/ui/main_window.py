@@ -49,9 +49,11 @@ from ..config import (
 )
 from ..timelapse import TimelapseCollector, compile_timelapse
 from ..wyze_control import CameraInfo, CameraState, WyzeController
+from .. import __version__
 from .adjust_panel import ImageAdjustPanel
 from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
 from .settings_dialog import SettingsDialog, forget_secrets
+from .update_ui import UpdateManager
 
 RIGHT_COLUMN_WIDTH = 380
 
@@ -121,11 +123,15 @@ class MainWindow(QMainWindow):
         self._save_adjust_timer.setInterval(600)
         self._save_adjust_timer.timeout.connect(lambda: save_settings(self.settings))
 
+        self.update_manager = UpdateManager(self)
+        self.update_manager.available.connect(self._on_update_available)
+
         self._build_ui()
         self._apply_always_on_top()
         if self.settings.rtsp_url:
             self._start_stream()
         QTimer.singleShot(500, self._auto_connect)
+        self.update_manager.start()
 
     # ------------------------------------------------------------------ UI build
     def _build_ui(self) -> None:
@@ -146,6 +152,11 @@ class MainWindow(QMainWindow):
         row.addLayout(self._build_center(), 1)
         row.addLayout(self._build_right_column())
         self.setCentralWidget(main)
+        self.update_btn = QPushButton("Update available")
+        self.update_btn.setObjectName("accentButton")
+        self.update_btn.clicked.connect(self.update_manager.install)
+        self.update_btn.hide()
+        self.statusBar().addPermanentWidget(self.update_btn)
         self._status("Ready")
         self._set_controls_enabled(False)
 
@@ -448,13 +459,16 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("Help")
         about_action = QAction("About Wyze Print Monitor", self)
         about_action.triggered.connect(self._show_about)
+        updates_action = QAction("Check for updates…", self)
+        updates_action.triggered.connect(lambda: self.update_manager.check(silent=False))
+        help_menu.addAction(updates_action)
         help_menu.addAction(about_action)
 
     def _show_about(self) -> None:
         QMessageBox.about(
             self,
             "About Wyze Print Monitor",
-            "Wyze Print Monitor v1\n\nLive RTSP view plus Wyze camera controls "
+            f"Wyze Print Monitor {__version__}\n\nLive RTSP view plus Wyze camera controls "
             "for 3D-print monitoring.\nSecrets live in the OS keyring, never on disk.",
         )
 
@@ -759,6 +773,11 @@ class MainWindow(QMainWindow):
         self.settings.image_adjustments = adjustments.to_dict()
         self._save_adjust_timer.start()
         self.adjustments_changed.emit(adjustments)
+
+    def _on_update_available(self, info) -> None:
+        self.update_btn.setText(f"Update to {info.version}")
+        self.update_btn.setToolTip(f"Wyze Print Monitor {info.version} is available (you have {__version__}).")
+        self.update_btn.show()
 
     def _status(self, message: str, timeout: int = 0) -> None:
         self.statusBar().showMessage(message, timeout)
@@ -1103,5 +1122,6 @@ class MainWindow(QMainWindow):
             reader.request_stop()
             reader.wait()
         self._retired_readers.clear()
+        self.update_manager.shutdown()
         self.runner.stop()
         save_settings(self.settings)

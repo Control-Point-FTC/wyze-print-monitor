@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wyze-print-monitor"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Desktop live view + camera controls for a Wyze Cam V3 mounted on a 3D printer"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,9 @@ wyze-print-monitor = "wyze_print_monitor.app:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+[tool.setuptools.dynamic]
+version = { attr = "wyze_print_monitor.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

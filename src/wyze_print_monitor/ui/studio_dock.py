@@ -115,6 +115,8 @@ QPushButton#danger {{ background: #3a2626; color: {RED}; }}
 QPushButton#danger:hover {{ background: #4a2c2c; }}
 QPushButton#danger:checked {{ background: {RED}; color: #2a0f0f; }}
 QPushButton#danger:disabled {{ background: #2f3033; color: #63666b; }}
+QPushButton#accent {{ background: {GREEN}; color: #10240f; font-weight: 600; padding: 3px 10px; }}
+QPushButton#accent:hover {{ background: #74dc73; }}
 QPushButton#plain {{ background: #34363a; color: {TEXT}; }}
 QPushButton#plain:hover {{ background: #3d4044; }}
 QPushButton#plain:checked {{ background: {SELECTED}; color: {GREEN}; }}
@@ -227,6 +229,9 @@ class MonitorPanel(_Panel):
         self.status = QLabel()
         self.status.setObjectName("dockStatus")
         self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.update_btn = QPushButton("Update")
+        self.update_btn.setObjectName("accent")
+        self.update_btn.hide()
         self.fullscreen_btn = _tool(ICON_FULLSCREEN, "", "Fullscreen (Esc to exit)")
         self.window_btn = _tool(ICON_WINDOW, "", "Open the full Wyze Print Monitor window")
         self.settings_btn = _tool(ICON_SETTINGS, "", "Settings")
@@ -234,7 +239,7 @@ class MonitorPanel(_Panel):
             tools.addWidget(widget)
         tools.addSpacing(8)
         tools.addWidget(self.status, 1)
-        for widget in (self.fullscreen_btn, self.window_btn, self.settings_btn):
+        for widget in (self.update_btn, self.fullscreen_btn, self.window_btn, self.settings_btn):
             tools.addWidget(widget)
         layout.addWidget(bar)
 
@@ -549,6 +554,7 @@ class StudioDock(QObject):
         mon.window_btn.clicked.connect(m.show_window)
         mon.settings_btn.clicked.connect(m._open_settings)
         mon.adjust_btn.clicked.connect(self._show_adjust)
+        mon.update_btn.clicked.connect(m.update_manager.install)
         cam.settings_btn.clicked.connect(m._open_settings)
         folders = QMenu(mon.folder_btn)
         folders.addAction("Open snapshot folder", lambda: m._open_folder(m.settings.resolved_snapshot_dir()))
@@ -640,6 +646,12 @@ class StudioDock(QObject):
                 mon.video.setText(placeholder)
 
         # --- toolbar
+        latest = m.update_manager.latest
+        if (latest is not None) != mon.update_btn.isVisible():
+            mon.update_btn.setVisible(latest is not None)
+        if latest is not None and mon.update_btn.toolTip() != latest.version:
+            mon.update_btn.setText(f"Update to {latest.version}")
+            mon.update_btn.setToolTip(latest.version)
         _sync_button(mon.snapshot_btn, m.snapshot_btn, "Snapshot")
         _sync_button(mon.record_btn, m.record_btn, "Stop" if m.record_btn.isChecked() else "Record")
         _sync_button(mon.timelapse_btn, m.timelapse_btn, "Stop" if m.timelapse_btn.isChecked() else "Timelapse")
