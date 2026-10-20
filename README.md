@@ -139,7 +139,9 @@ behind the camera when the PC is busy.
 
 ### Picture adjustments
 
-The ☀ button (or *All adjustments…* in the camera panel): brightness,
+The ☀ button (or *All adjustments…*) turns the camera panel into the
+picture controls — beside the video, so you see every change live; *Done*
+goes back. Brightness,
 contrast, exposure, gamma, saturation, warmth, sharpness, rotate 90°, flip,
 and digital zoom with pan. Adjustments apply to the live view *and* to
 snapshots, recordings and timelapses, and are remembered. Double-click a
