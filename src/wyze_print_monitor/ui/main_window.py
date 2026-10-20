@@ -827,6 +827,8 @@ class MainWindow(QMainWindow):
         def done(ok: bool, _result, error: str) -> None:
             self.connect_btn.setEnabled(True)
             if not ok:
+                if "SupersededLogin" in error:
+                    return  # a newer login (e.g. from Settings) took over
                 if "NeedTwoFactor" in error:
                     self._ask_2fa()
                     return
@@ -1059,8 +1061,17 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ misc
     def _open_settings(self) -> None:
+        # Don't let a background re-login with the old saved credentials run
+        # while the user is testing new ones in Settings.
+        retry_was_pending = self._login_retry_timer.isActive()
+        self._login_retry_timer.stop()
         dialog = SettingsDialog(self.settings, self.controller, self)
-        if dialog.exec() == QDialog.Accepted:
+        accepted = dialog.exec() == QDialog.Accepted
+        if self.controller.logged_in:
+            self._login_retries = 0
+        elif retry_was_pending:
+            self._login_retry_timer.start()
+        if accepted:
             save_settings(self.settings)
             self._apply_always_on_top()
             self.on_top_action.setChecked(self.settings.always_on_top)

@@ -33,12 +33,18 @@ VersionInfoProductName={#AppName}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 ; Short, friendly flow: Welcome -> shortcut option -> install -> done
-; (no "for me / all users" prompt, folder, license or "ready" pages).
+; (no folder, license or "ready" pages).
 DisableWelcomePage=no
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
 PrivilegesRequired=lowest
+; New installs default to "just me" (no admin). The choice stays available so
+; an existing all-users install is upgraded in place: with
+; UsePreviousPrivileges, Setup reuses the previous install mode and doesn't
+; ask on upgrades (silent updates included).
+PrivilegesRequiredOverridesAllowed=dialog
+UsePreviousPrivileges=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0

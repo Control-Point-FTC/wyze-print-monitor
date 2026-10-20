@@ -8,6 +8,7 @@ the GUI thread.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -24,14 +25,26 @@ from .async_runner import AsyncRunner, OnDone
 LOGIN_RETRY_DELAYS_S = (60, 300, 900)
 
 
+RATE_LIMITED = re.compile(r"(?:contenttypeerror|status|http|error)\W{0,3}429\b")
+
+
+class SupersededLogin(Exception):
+    """A newer login started before this one finished; its result is dropped."""
+
+
 def describe_login_error(error: str) -> tuple[str, bool]:
     """A user-facing reason for a failed Wyze login, and whether trying
     again later can help (True) or the user has to fix something (False)."""
     text = (error or "").lower()
-    if "429" in text or "too many" in text or "rate limit" in text:
-        return "Wyze is temporarily limiting logins (too many attempts).", True
+    # Rejected credentials first: a rejection must never be retried, even if
+    # some other part of the message (a request id...) happens to look like
+    # a rate limit.
     if "invalid credentials" in text or "'errorcode': 1000" in text or "access denied" in text:
         return "Wyze rejected the login. Check your email, password and API key in Settings.", False
+    # Rate limit: HTTP 429 as the status (e.g. "ContentTypeError: 429, ..."),
+    # not any "429" anywhere in the text.
+    if RATE_LIMITED.search(text) or "too many requests" in text or "rate limit" in text:
+        return "Wyze is temporarily limiting logins (too many attempts).", True
     if any(
         marker in text
         for marker in (
@@ -114,20 +127,28 @@ class WyzeController:
         self._runner = runner
         self._client: Optional[Wyzeapy] = None
         self._pending_client: Optional[Wyzeapy] = None
+        self._login_seq = 0
         self._cameras: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ login
     async def _do_login(
-        self, email: str, password: str, key_id: str, api_key: str
+        self, email: str, password: str, key_id: str, api_key: str, seq: int
     ) -> bool:
         client = Wyzeapy()
         try:
             await client.login(email, password, key_id, api_key)
         except TwoFactorAuthenticationEnabled:
+            if seq != self._login_seq:
+                raise SupersededLogin("A newer login replaced this one.")
             self._pending_client = client
             raise NeedTwoFactor(
                 "Wyze requires a 2FA verification code for this login."
             )
+        # Newest login wins: an older attempt (e.g. a background retry with
+        # the previously saved credentials) finishing late must not replace
+        # the account the user just signed in with.
+        if seq != self._login_seq:
+            raise SupersededLogin("A newer login replaced this one.")
         self._client = client
         self._pending_client = None
         return True
@@ -140,8 +161,9 @@ class WyzeController:
         api_key: str,
         on_done: OnDone,
     ) -> None:
+        self._login_seq += 1
         self._runner.submit(
-            "login", self._do_login(email, password, key_id, api_key), on_done
+            "login", self._do_login(email, password, key_id, api_key, self._login_seq), on_done
         )
 
     async def _do_login_2fa(self, code: str) -> bool:
