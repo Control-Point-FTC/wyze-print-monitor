@@ -212,6 +212,9 @@ class UpdateManager(QObject):
 
     def _close_progress(self) -> None:
         if self._progress is not None:
+            # QProgressDialog.close() emits canceled(); don't let our own
+            # cleanup register as the user cancelling.
+            self._progress.blockSignals(True)
             self._progress.close()
             self._progress.deleteLater()
             self._progress = None
@@ -224,8 +227,9 @@ class UpdateManager(QObject):
 
     def _on_downloaded(self, path: str) -> None:
         worker, self._download_worker = self._download_worker, None
+        cancelled = worker is None or worker.cancel_requested  # read before closing the dialog
         self._close_progress()
-        if worker is None or worker.cancel_requested:
+        if cancelled:
             # Cancelled after the last chunk arrived: honor it.
             try:
                 os.remove(path)
