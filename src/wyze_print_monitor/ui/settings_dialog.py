@@ -265,12 +265,11 @@ class SettingsDialog(QDialog):
             "or a loud bang. Sound alone never pauses."
         )
         watch_form.addRow(self.sound_check)
-        sound = self._watch.sound_status() if self._watch is not None else ""
-        if sound.startswith("unavailable"):
-            note = QLabel("Sound alerts aren't working right now: " + sound.split(": ", 1)[-1] + ".")
-            note.setWordWrap(True)
-            note.setStyleSheet("color: #e0a040;")
-            watch_form.addRow(note)
+        self.sound_note = QLabel()
+        self.sound_note.setWordWrap(True)
+        self.sound_note.setStyleSheet("color: #e0a040;")
+        watch_form.addRow(self.sound_note)
+        self._refresh_sound_note()
         column.addLayout(watch_form)
         column.addStretch(1)
 
@@ -278,8 +277,17 @@ class SettingsDialog(QDialog):
         if self._watch is not None:
             self._watch.download_progress.connect(self._on_download_progress)
             self._watch.download_finished.connect(self._on_download_finished)
+            self._watch.status_changed.connect(self._refresh_sound_note)
         self._refresh_watch()
         return page
+
+    def _refresh_sound_note(self) -> None:
+        """Kept live: the sound connection can drop or recover while open."""
+        sound = self._watch.sound_status() if self._watch is not None else ""
+        trouble = sound.startswith("unavailable")
+        if trouble:
+            self.sound_note.setText("Sound alerts aren't working right now: " + sound.split(": ", 1)[-1] + ".")
+        self.sound_note.setVisible(trouble)
 
     def _refresh_watch(self) -> None:
         installed = failure_model.is_installed()
@@ -331,6 +339,7 @@ class SettingsDialog(QDialog):
             for signal, slot in (
                 (self._watch.download_progress, self._on_download_progress),
                 (self._watch.download_finished, self._on_download_finished),
+                (self._watch.status_changed, self._refresh_sound_note),
             ):
                 try:
                     signal.disconnect(slot)
