@@ -2,19 +2,45 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .ui.main_window import MainWindow
 from .ui.styles import DARK_QSS
 
 
+ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
+APP_USER_MODEL_ID = "ControlPointFTC.WyzePrintMonitor"
+
+
+def app_icon() -> QIcon:
+    """The app logo, or a green camera glyph if the asset is missing."""
+    if ICON_PATH.is_file():
+        icon = QIcon(str(ICON_PATH))
+        if not icon.isNull():
+            return icon
+    from .ui.icons import ICON_CAMERA, glyph_icon
+
+    return glyph_icon(ICON_CAMERA, "#62d361", 32)
+
+
+def _set_windows_app_id() -> None:
+    """Give the process its own taskbar identity, so Windows shows our icon
+    (and groups our windows) instead of python.exe's."""
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except (AttributeError, OSError):
+        pass
+
+
 def _make_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon | None:
     if not QSystemTrayIcon.isSystemTrayAvailable():
         return None
-    from .ui.studio_dock import ICON_CAMERA, glyph_icon
-
-    tray = QSystemTrayIcon(glyph_icon(ICON_CAMERA, "#62d361", 32), app)
+    tray = QSystemTrayIcon(app.windowIcon(), app)
     tray.setToolTip("Wyze Print Monitor")
     menu = QMenu()
     menu.addAction("Open Wyze Print Monitor", window.show_window)
@@ -33,9 +59,12 @@ def _make_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon | None:
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        _set_windows_app_id()  # must happen before any window exists
     app = QApplication(sys.argv)
     app.setApplicationName("Wyze Print Monitor")
     app.setOrganizationName("Control-Point-FTC")
+    app.setWindowIcon(app_icon())
     app.setStyleSheet(DARK_QSS)
     window = MainWindow()
 

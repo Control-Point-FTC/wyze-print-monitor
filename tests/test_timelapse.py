@@ -72,3 +72,19 @@ def test_collector_write_failure_not_counted(tmp_path, monkeypatch):
     assert collector.maybe_capture(_frame(), now=1010.0) is True
     assert collector.saved == 1
     assert collector.write_errors == 1
+
+
+def test_compile_letterboxes_frames_whose_shape_changed(tmp_path):
+    """A capture rotated 90° mid-timelapse must not be stretched."""
+    frames_dir = tmp_path / "frames"
+    frames_dir.mkdir()
+    cv2.imwrite(str(frames_dir / "frame_000000.jpg"), np.full((90, 160, 3), 128, np.uint8))
+    cv2.imwrite(str(frames_dir / "frame_000001.jpg"), np.full((160, 90, 3), 128, np.uint8))
+    out = tmp_path / "out.mp4"
+    assert compile_timelapse(str(frames_dir), str(out)) == 2
+    cap = cv2.VideoCapture(str(out))
+    cap.read()
+    ok, second = cap.read()
+    cap.release()
+    assert ok and second.shape[:2] == (90, 160)
+    assert second[:, :30].mean() < 20  # letterbox bar, not stretched picture
