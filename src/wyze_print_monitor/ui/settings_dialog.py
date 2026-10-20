@@ -34,6 +34,8 @@ from ..config import (
     get_secret,
     save_secret,
 )
+from ..quality import LABELS as QUALITY_LABELS
+from ..quality import QUALITIES
 from ..wyze_control import CameraInfo, WyzeController
 
 
@@ -60,8 +62,27 @@ class SettingsDialog(QDialog):
         # Show the real URL (from the keyring when present); the settings file
         # only ever holds a redacted copy.
         self.rtsp_edit = QLineEdit(effective_rtsp_url(settings))
-        self.rtsp_edit.setPlaceholderText("rtsp://user:pass@192.168.x.x/live")
-        form.addRow("RTSP URL", self.rtsp_edit)
+        self.rtsp_edit.setPlaceholderText("rtsps://user:pass@192.168.x.x:322/stream0")
+        # The URL carries the camera password: hidden unless asked for.
+        self.rtsp_edit.setEchoMode(QLineEdit.Password)
+        show_rtsp = QCheckBox("Show")
+        show_rtsp.toggled.connect(
+            lambda shown: self.rtsp_edit.setEchoMode(QLineEdit.Normal if shown else QLineEdit.Password)
+        )
+        rtsp_row = QHBoxLayout()
+        rtsp_row.addWidget(self.rtsp_edit, 1)
+        rtsp_row.addWidget(show_rtsp)
+        form.addRow("RTSP URL", rtsp_row)
+
+        self.quality_combo = QComboBox()
+        for key in QUALITIES:
+            self.quality_combo.addItem(QUALITY_LABELS[key], key)
+        self.quality_combo.setCurrentIndex(max(self.quality_combo.findData(settings.stream_quality), 0))
+        self.quality_combo.setToolTip(
+            "Auto shows full HD and switches to the camera's 360p stream when frames "
+            "drop below 10 fps. 720p keeps everything smooth on slower PCs."
+        )
+        form.addRow("Video quality", self.quality_combo)
 
         self.email_edit = QLineEdit(settings.wyze_email)
         self.email_edit.setPlaceholderText("you@example.com")
@@ -252,6 +273,7 @@ class SettingsDialog(QDialog):
         s.video_dir = self.video_edit.text().strip()
         s.always_on_top = self.on_top_check.isChecked()
         s.dock_in_studio = self.dock_check.isChecked()
+        s.stream_quality = self.quality_combo.currentData()
         s.check_updates = self.updates_check.isChecked()
         s.dock_printer_row = self.dock_row_spin.value()
         mac =self.camera_combo.currentData()

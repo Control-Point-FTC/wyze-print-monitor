@@ -107,6 +107,10 @@ QFrame#pill QToolButton {{ border: none; border-radius: 8px; padding: 6px 9px; c
 QFrame#pill QToolButton:hover {{ background: rgba(255, 255, 255, 28); }}
 QFrame#pill QToolButton:checked {{ background: {SELECTED}; color: {GREEN}; }}
 QFrame#pill QToolButton:disabled {{ color: {TEXT_FAINT}; }}
+QFrame#pill QToolButton#quality {{
+    font-size: 11px; font-weight: 600; padding: 4px 8px; border: 1px solid rgba(255, 255, 255, 45);
+}}
+QFrame#pill QToolButton#quality::menu-indicator {{ image: none; width: 0; }}
 QFrame#pillSep {{ background: rgba(255, 255, 255, 40); }}
 QLabel#toast {{
     background: rgba(24, 25, 27, 225); color: {TEXT}; border-radius: 8px;
@@ -283,6 +287,12 @@ class VideoView(QWidget):
         self.timelapse_btn = tool_button(ICON_TIMER, "", "Print timelapse", checkable=True)
         self.adjust_btn = tool_button(ICON_ADJUST, "", "Picture: brightness, exposure, rotate, zoom…")
         self.fit_btn = tool_button(ICON_FIT, "", "Fill the space (crop) / fit the whole picture", checkable=True)
+        self.quality_btn = QToolButton()
+        self.quality_btn.setObjectName("quality")
+        self.quality_btn.setText("Auto")
+        self.quality_btn.setToolTip("Stream quality")
+        self.quality_btn.setPopupMode(QToolButton.InstantPopup)
+        self.quality_btn.setCursor(Qt.PointingHandCursor)
         self.folder_btn = tool_button(ICON_FOLDER, "", "Open the snapshot / video folder")
         self.folder_btn.setPopupMode(QToolButton.InstantPopup)
         self.fullscreen_btn = tool_button(ICON_FULLSCREEN, "", "Fullscreen (Esc to exit)")
@@ -294,7 +304,7 @@ class VideoView(QWidget):
         for widget in (self.snapshot_btn, self.record_btn, self.timelapse_btn):
             self.pill.row.addWidget(widget)
         self.pill.separator()
-        for widget in (self.adjust_btn, self.fit_btn, self.folder_btn):
+        for widget in (self.adjust_btn, self.fit_btn, self.quality_btn, self.folder_btn):
             self.pill.row.addWidget(widget)
         self.pill.separator()
         for widget in (self.fullscreen_btn, self.window_btn, self.settings_btn, self.update_btn):

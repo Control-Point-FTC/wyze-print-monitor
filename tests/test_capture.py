@@ -22,10 +22,15 @@ def _stub_qt(monkeypatch):
 
     qtcore.QThread = QThread
     qtcore.Signal = lambda *a, **k: None
+    qtgui = types.ModuleType("PySide6.QtGui")
+    qtgui.QImage = type("QImage", (), {})
     pyside = types.ModuleType("PySide6")
     pyside.QtCore = qtcore
+    pyside.QtGui = qtgui
     monkeypatch.setitem(sys.modules, "PySide6", pyside)
     monkeypatch.setitem(sys.modules, "PySide6.QtCore", qtcore)
+    monkeypatch.setitem(sys.modules, "PySide6.QtGui", qtgui)
+    monkeypatch.delitem(sys.modules, "wyze_print_monitor.capture", raising=False)
 
 
 def test_snapshot_paths_are_unique(tmp_path):
@@ -75,7 +80,7 @@ def test_open_prefers_tcp_with_timeouts_and_falls_back(monkeypatch):
     monkeypatch.setattr(capture.cv2, "VideoCapture", FakeCap)
     monkeypatch.delenv(capture.FFMPEG_OPTIONS_ENV, raising=False)
     monkeypatch.setattr(capture, "_USER_FFMPEG_OPTIONS", None)
-    cap = capture.StreamReader("rtsps://cam/stream0")._open()
+    cap = capture.StreamReader("rtsps://cam/stream0")._open("rtsps://cam/stream0")
 
     assert cap.isOpened()
     assert [opts for opts, _ in attempts] == [capture.RTSP_OVER_TCP, None]
@@ -114,5 +119,32 @@ def test_open_restores_user_options(monkeypatch):
     monkeypatch.setattr(capture.cv2, "VideoCapture", FailingCap)
     monkeypatch.setattr(capture, "_USER_FFMPEG_OPTIONS", "stimeout;5000000")
     monkeypatch.setenv(capture.FFMPEG_OPTIONS_ENV, "stimeout;5000000")
-    capture.StreamReader("rtsp://cam/live")._open()
+    capture.StreamReader("rtsp://cam/live")._open("rtsp://cam/live")
     assert os.environ[capture.FFMPEG_OPTIONS_ENV] == "stimeout;5000000"
+
+
+def test_mailbox_keeps_only_the_newest_frame_and_notifies_once(monkeypatch):
+    """If the GUI is busy, stale frames are replaced, not queued (queued
+    frames are what made the picture lag behind the camera) - while the
+    recorder on the stream thread still gets every frame."""
+    import numpy as np
+
+    from wyze_print_monitor import capture
+
+    monkeypatch.setattr(capture, "to_display_image", lambda frame, width: ("image", int(frame[0, 0, 0])))
+    reader = capture.StreamReader("rtsp://cam/stream0", quality="1080p")
+    emitted = []
+    reader.frame_ready = type("Sig", (), {"emit": lambda self: emitted.append(1)})()
+    written = []
+    reader.set_sinks(type("Rec", (), {"write": lambda self, f: written.append(int(f[0, 0, 0]))})(), None)
+
+    for value in (1, 2, 3):
+        reader._handle(np.full((4, 4, 3), value, np.uint8))
+    assert len(emitted) == 1              # one notification while the GUI is busy
+    frame, image = reader.take_latest()
+    assert image == ("image", 3)          # only the newest frame is shown
+    assert written == [1, 2, 3]           # but every frame was recorded
+    assert reader.take_latest() is None
+
+    reader._handle(np.full((4, 4, 3), 4, np.uint8))
+    assert len(emitted) == 2              # mailbox emptied -> notify again

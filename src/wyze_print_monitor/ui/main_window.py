@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 from ..async_runner import AsyncRunner
 from ..adjust import ImageAdjustments
 from ..capture import ClipRecorder, StreamReader, snapshot_path
+from ..quality import normalize as normalize_quality
 from ..config import (
     SECRET_API_KEY,
     SECRET_KEY_ID,
@@ -63,6 +64,7 @@ from .update_ui import UpdateManager
 from .views import VIEWS_QSS, CameraPanel, VideoView
 
 RIGHT_COLUMN_WIDTH = 380
+LABEL_REFRESH_S = 0.5
 
 
 class TimelapseCompileWorker(QThread):
@@ -116,6 +118,8 @@ class MainWindow(QMainWindow):
         self._reader: StreamReader | None = None
         self._retired_readers: list[StreamReader] = []
         self._close_pending = False
+        self._last_labels = 0.0
+        self.active_quality = ""
         self._recorder: ClipRecorder | None = None
         self._timelapse: TimelapseCollector | None = None
         self._timelapse_write_warned = False
@@ -545,18 +549,27 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ stream
     def _start_stream(self) -> None:
         self._stop_stream()
-        self._reader = StreamReader(effective_rtsp_url(self.settings), self)
+        self._reader = StreamReader(
+            effective_rtsp_url(self.settings), self, quality=self.settings.stream_quality
+        )
         self._reader.adjustments = self.adjustments
-        self._reader.frame_ready.connect(self._on_frame)
+        self._reader.display_width = self._display_width()
+        self._reader.set_sinks(self._recorder, self._timelapse)  # survive a restart
+        self._reader.frame_ready.connect(self._on_frame_ready)
         self._reader.state_changed.connect(self._on_stream_state)
+        self._reader.recording_failed.connect(self._on_recording_failed)
+        self._reader.quality_changed.connect(self._on_quality_changed)
         self._reader.start()
 
     def _stop_stream(self) -> None:
         if self._reader is not None:
             reader = self._reader
             self._reader = None
-            reader.frame_ready.disconnect(self._on_frame)
+            reader.set_sinks(None, None)  # the recorder/timelapse outlive this reader
+            reader.frame_ready.disconnect(self._on_frame_ready)
             reader.state_changed.disconnect(self._on_stream_state)
+            reader.recording_failed.disconnect(self._on_recording_failed)
+            reader.quality_changed.disconnect(self._on_quality_changed)
             if not reader.stop():
                 # Still blocked inside FFmpeg. Never let a running QThread be
                 # destroyed: keep a reference until it actually finishes, and
@@ -622,46 +635,78 @@ class MainWindow(QMainWindow):
         else:
             self.session_timelapse.setText("—")
 
-    def _on_frame(self, frame: np.ndarray) -> None:
+    def _on_frame_ready(self) -> None:
+        """A new frame is in the reader's mailbox. Everything heavy (scaling,
+        adjustments, recording, conversion) already happened on the stream
+        thread; this only hands the ready-made image to the views."""
+        reader = self._reader
+        item = reader.take_latest() if reader is not None else None
+        if item is None:
+            return
+        frame, image = item
+        self._present(frame, image)
+        reader.display_width = self._display_width()
+
+    def _present(self, frame: np.ndarray, image: QImage) -> None:
         self._last_frame = frame
+        for view in self.video_views:
+            if view.isVisible():
+                view.set_image(image)
+        # Status text doesn't need 20 updates a second.
+        now = time.monotonic()
+        if now - self._last_labels < LABEL_REFRESH_S:
+            return
+        self._last_labels = now
         if self._reader is not None:
             w, h = self._reader.frame_size
-            fps = self._reader.measured_fps
             if w and h:
-                self.stream_info_label.setText(f"{w}×{h}  •  {fps:.0f} fps")
+                self.stream_info_label.setText(f"{w}×{h}  •  {self._reader.measured_fps:.0f} fps")
         self._update_stat_cards()
         self._update_session_panel()
+        collector = self._timelapse
+        if collector is not None and collector.write_errors and not self._timelapse_write_warned:
+            self._timelapse_write_warned = True
+            self._status("Timelapse: couldn't save a frame — check disk space.", 8000)
 
+    def _display_width(self) -> int:
+        """Widest visible view in device pixels: frames are scaled to this on
+        the stream thread (0 while nothing is visible = no scaling)."""
+        widths = [
+            int(view.width() * view.devicePixelRatioF())
+            for view in self.video_views
+            if view.isVisible()
+        ]
+        return max(widths, default=0)
+
+    def _on_recording_failed(self, error: str) -> None:
+        # e.g. folder became unwritable mid-recording: stop cleanly instead of
+        # claiming a good clip at the end.
         if self._recorder is not None:
-            try:
-                self._recorder.write(frame)
-            except IOError as exc:
-                # e.g. folder became unwritable mid-recording: stop cleanly
-                # instead of claiming a good clip at the end.
-                self._recorder.close()
-                self._recorder = None
-                self.record_btn.setChecked(False)
-                self.record_btn.setText("Record")
-                QMessageBox.warning(self, "Recording failed", str(exc))
-        if self._timelapse is not None:
-            collector = self._timelapse
-            collector.maybe_capture(frame)
-            if collector.write_errors and not self._timelapse_write_warned:
-                self._timelapse_write_warned = True
-                self._status(
-                    "Timelapse: couldn't save a frame — check disk space.", 8000
-                )
+            self._recorder.close()
+            self._recorder = None
+            self._rec_start = None
+        self.record_btn.setChecked(False)
+        self.record_btn.setText("Record")
+        self._update_session_panel()
+        QMessageBox.warning(self, "Recording failed", error)
 
-        # Convert once and hand the same image to every visible view (this
-        # window and the Studio-docked one); each scales it as it paints.
-        targets = [view for view in self.video_views if view.isVisible()]
-        if not targets:
+    def _on_quality_changed(self, label: str) -> None:
+        self.active_quality = label
+
+    def set_stream_quality(self, quality: str) -> None:
+        """Change the quality setting (from the toolbar or Settings)."""
+        quality = normalize_quality(quality)
+        if quality == self.settings.stream_quality:
             return
-        h, w = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-        for view in targets:
-            view.set_image(image)
+        self.settings.stream_quality = quality
+        save_settings(self.settings)
+        if self._reader is not None:
+            self._reader.set_quality(quality)
+
+    def _update_sinks(self) -> None:
+        """Point the stream thread at the current recorder / timelapse."""
+        if self._reader is not None:
+            self._reader.set_sinks(self._recorder, self._timelapse)
 
     # ------------------------------------------------------------------ capture actions
     def _on_snapshot(self) -> None:
@@ -686,14 +731,18 @@ class MainWindow(QMainWindow):
             fps = self._reader.measured_fps if self._reader is not None else 0.0
             self._recorder = ClipRecorder(path, fps=fps or 20.0)
             self._rec_start = time.monotonic()
+            self._update_sinks()
             self.record_btn.setText("Stop recording")
             self._update_session_panel()
             self._status("Recording…", 3000)
         else:
             if self._recorder is not None:
-                path = self._recorder.output_path
-                count = self._recorder.frames_written
-                self._recorder.close()
+                recorder = self._recorder
+                self._recorder = None
+                self._update_sinks()  # stop writing before closing the file
+                path = recorder.output_path
+                count = recorder.frames_written
+                recorder.close()
                 self._recorder = None
                 self._rec_start = None
                 self._status(
@@ -715,6 +764,7 @@ class MainWindow(QMainWindow):
             )
             self._timelapse.start()
             self._timelapse_write_warned = False
+            self._update_sinks()
             self.timelapse_btn.setText("Stop timelapse")
             self._update_session_panel()
             self._status(
@@ -724,6 +774,7 @@ class MainWindow(QMainWindow):
         else:
             collector = self._timelapse
             self._timelapse = None
+            self._update_sinks()
             self.timelapse_btn.setText("Timelapse")
             self._update_session_panel()
             if collector is None or collector.saved == 0:
@@ -1188,6 +1239,8 @@ class MainWindow(QMainWindow):
         if self._shut_down:
             return
         self._shut_down = True
+        if self._reader is not None:
+            self._reader.set_sinks(None, None)
         if self._recorder is not None:
             self._recorder.close()
         self._stop_stream()

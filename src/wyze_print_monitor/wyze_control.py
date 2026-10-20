@@ -28,6 +28,27 @@ LOGIN_RETRY_DELAYS_S = (60, 300, 900)
 RATE_LIMITED = re.compile(r"(?:contenttypeerror|status|http|error)\W{0,3}429\b")
 
 
+# Wyze product codes -> names people recognize.
+MODEL_NAMES = {
+    "WYZE_CAKP2JFUS": "Wyze Cam v3",
+    "HL_CAM3P": "Wyze Cam v3 Pro",
+    "HL_CAM4": "Wyze Cam v4",
+    "WYZEC1-JZ": "Wyze Cam v2",
+    "WYZECP1_JEF": "Wyze Cam Pan",
+    "HL_PAN2": "Wyze Cam Pan v2",
+    "HL_PAN3": "Wyze Cam Pan v3",
+    "WYZE_CAKP2JFUS_V3": "Wyze Cam v3",
+}
+
+
+def friendly_model(code: str) -> str:
+    """'WYZE_CAKP2JFUS' -> 'Wyze Cam v3'; unknown codes -> 'Wyze camera'."""
+    code = (code or "").strip()
+    if not code or code == "—":
+        return "Wyze camera"
+    return MODEL_NAMES.get(code.upper(), "Wyze camera")
+
+
 class SupersededLogin(Exception):
     """A newer login started before this one finished; its result is dropped."""
 
