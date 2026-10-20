@@ -106,6 +106,15 @@ class Settings:
     video_fill: bool = False
     # Stream quality: auto | 1080p | 720p | 360p (see quality.py).
     stream_quality: str = "auto"
+    # Print watch (needs the separately downloaded model, see failure_model).
+    ai_watch: bool = False
+    # Pause through Studio when the model is very sure; stopping is always
+    # left to the user.
+    ai_auto_pause: bool = True
+    ai_sensitivity: str = "normal"  # low | normal | high
+    sound_alerts: bool = True
+    # This camera's long-term "normal" for the model (failure_detect.Baseline).
+    ai_baseline: dict = field(default_factory=dict)
 
     def resolved_snapshot_dir(self) -> str:
         if self.snapshot_dir:

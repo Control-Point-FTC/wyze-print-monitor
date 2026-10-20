@@ -17,6 +17,12 @@
 ; Must match APP_USER_MODEL_ID / INSTALLER_MUTEX in src/wyze_print_monitor/app.py.
 #define AppUserModelID "ControlPointFTC.WyzePrintMonitor"
 #define AppMutexName "WyzePrintMonitorRunning"
+; Print watch model: must match failure_model.py (URL, SHA-256, file names).
+#define ModelURL "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
+#define ModelSHA256 "0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa"
+#define ModelDir "{userappdata}\wyze-print-monitor\models"
+#define ModelFile "obico-failure-detection.onnx"
+#define ModelEnableMarker "enable-print-watch"
 
 [Setup]
 ; Never change AppId: it's how upgrades and the uninstaller find the install.
@@ -70,11 +76,14 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nWatch and control the Wyze Cam on your 3D printer (live view, snapshots, recordings and timelapses) right inside eufyMake Studio.%n%nNo admin rights needed.
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nWatch and control the Wyze Cam on your 3D printer (live view, snapshots, recordings and timelapses) right inside eufyMake Studio, with an optional AI that watches for failed prints.%n%nNo admin rights needed.
 FinishedLabel=[name] is installed. Find it any time in the Start menu: just search for "Wyze".
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Offered only when the model isn't there yet; never inherited by updates
+; (a silent update must not start a 200 MB download).
+Name: "aimodel"; Description: "Download the AI print-failure model (about 200 MB) and turn on Print watch"; GroupDescription: "Print watch: alerts you to failed prints and can pause them (optional, runs on this PC; model by Obico, AGPL-3.0):"; Flags: dontinheritcheck; Check: ShouldOfferModel
 
 [Files]
 Source: "..\build\dist\WyzePrintMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -90,6 +99,10 @@ Type: filesandordirs; Name: "{app}\_internal"
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "{#AppUserModelID}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "{#AppUserModelID}"; Tasks: desktopicon
 
+[UninstallDelete]
+; The downloaded model (settings stay, like the rest of the user's data).
+Type: filesandordirs; Name: "{#ModelDir}"
+
 [Registry]
 ; The app can add itself to startup (Settings → Launch at startup);
 ; remove that entry when the app is uninstalled.
@@ -100,3 +113,97 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 ; Silent install = in-app update: reopen the app automatically.
 Filename: "{app}\{#AppExe}"; Flags: nowait skipifnotsilent
+
+[Code]
+var
+  DownloadPage: TDownloadWizardPage;
+  ModelDownloaded: Boolean;
+  ModelError: String;
+
+function ModelPath(): String;
+begin
+  Result := ExpandConstant('{#ModelDir}\{#ModelFile}');
+end;
+
+function ShouldOfferModel(): Boolean;
+begin
+  // Interactive installs offer it; silent ones (in-app updates) only when
+  // asked for explicitly with /aimodel=1.
+  Result := (not FileExists(ModelPath())) and
+    ((not WizardSilent()) or (ExpandConstant('{param:aimodel|0}') = '1'));
+end;
+
+function OnDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  Result := True;
+end;
+
+procedure InitializeWizard();
+begin
+  DownloadPage := CreateDownloadPage('Downloading the AI model',
+    'Getting the print-failure model from Obico and checking it. You can skip this and download it later in Settings > Print watch.',
+    @OnDownloadProgress);
+  DownloadPage.ShowBaseNameInsteadOfUrl := True;
+end;
+
+// Interactive: download right after the options page, with a progress bar.
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpSelectTasks) and WizardIsTaskSelected('aimodel') and not ModelDownloaded then
+  begin
+    DownloadPage.Clear;
+    DownloadPage.Add('{#ModelURL}', '{#ModelFile}', '{#ModelSHA256}');
+    DownloadPage.Show;
+    try
+      try
+        DownloadPage.Download;  // verifies the SHA-256
+        ModelDownloaded := True;
+      except
+        if DownloadPage.AbortedByUser then
+          ModelError := 'The download was cancelled.'
+        else
+          ModelError := GetExceptionMessage;
+      end;
+    finally
+      DownloadPage.Hide;
+    end;
+  end;
+end;
+
+procedure InstallModel();
+var
+  Dir: String;
+begin
+  Dir := ExpandConstant('{#ModelDir}');
+  ForceDirectories(Dir);
+  if FileCopy(ExpandConstant('{tmp}\{#ModelFile}'), ModelPath(), False) then
+    // The app turns Print watch on when it sees this (and removes it).
+    SaveStringToFile(Dir + '\{#ModelEnableMarker}', 'from installer', False)
+  else
+    ModelError := 'Could not save the model to ' + Dir + '.';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('aimodel') then
+  begin
+    if (not ModelDownloaded) and (ModelError = '') then
+    begin
+      // Silent installs (/aimodel=1) never saw the page: download quietly.
+      try
+        DownloadTemporaryFile('{#ModelURL}', '{#ModelFile}', '{#ModelSHA256}', @OnDownloadProgress);
+        ModelDownloaded := True;
+      except
+        ModelError := GetExceptionMessage;
+      end;
+    end;
+    if ModelDownloaded then
+      InstallModel();
+    if ModelError <> '' then
+      // (No line may start with '#': the preprocessor would take it as a directive.)
+      SuppressibleMsgBox('The app is installed, but the AI model could not be downloaded:' + #13#10 +
+        ModelError + #13#10#13#10 + 'You can download it any time in Settings > Print watch.',
+        mbInformation, MB_OK, IDOK);
+  end;
+end;

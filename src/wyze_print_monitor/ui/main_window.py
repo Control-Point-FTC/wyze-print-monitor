@@ -57,10 +57,11 @@ from ..wyze_control import (
     WyzeController,
     describe_login_error,
 )
-from .. import __version__
+from .. import __version__, failure_model
 from .binder import PanelBinder
 from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
 from .settings_dialog import SettingsDialog, forget_secrets
+from .print_watch_ui import PrintWatch
 from .update_ui import UpdateManager
 from .views import VIEWS_QSS, CameraPanel, VideoView
 
@@ -112,6 +113,9 @@ class MainWindow(QMainWindow):
         self.resize(1180, 720)
 
         self.settings = load_settings()
+        if failure_model.consume_enable_marker():
+            self.settings.ai_watch = True  # chosen in the installer
+            save_settings(self.settings)
         self.runner = AsyncRunner(self)
         self.runner.start()
         self.controller = WyzeController(self.runner)
@@ -146,6 +150,7 @@ class MainWindow(QMainWindow):
         self._login_retry_timer.timeout.connect(lambda: self._on_connect(silent=True))
 
         self.update_manager = UpdateManager(self)
+        self.print_watch = PrintWatch(self)
         self.update_manager.available.connect(self._on_update_available)
 
         self._build_ui()
@@ -498,6 +503,14 @@ class MainWindow(QMainWindow):
 
         settings_menu = self.menuBar().addMenu("Settings")
         settings_menu.addAction(settings_action)
+        self.print_watch_action = QAction("Print watch (AI)", self, checkable=True)
+        self.print_watch_action.setToolTip("Watch prints for failures")
+        self.print_watch_action.setChecked(bool(self.settings.ai_watch))
+        self.print_watch_action.toggled.connect(self.set_print_watch_enabled)
+        settings_menu.addAction(self.print_watch_action)
+        watch_settings = QAction("Print watch settings…", self)
+        watch_settings.triggered.connect(lambda: self._open_settings(tab="watch"))
+        settings_menu.addAction(watch_settings)
 
         help_menu = self.menuBar().addMenu("Help")
         about_action = QAction("About Wyze Print Monitor", self)
@@ -561,6 +574,7 @@ class MainWindow(QMainWindow):
         self._reader.recording_failed.connect(self._on_recording_failed)
         self._reader.quality_changed.connect(self._on_quality_changed)
         self._reader.start()
+        self.print_watch.set_stream(effective_rtsp_url(self.settings))
 
     def _stop_stream(self) -> None:
         if self._reader is not None:
@@ -1169,12 +1183,37 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------ misc
-    def _open_settings(self) -> None:
+    def set_print_watch_enabled(self, on: bool) -> None:
+        """Turn Print watch on/off (menu, camera panel). Without the model,
+        turning it on opens Settings at the download instead."""
+        if on and not failure_model.is_installed():
+            self.print_watch_action.blockSignals(True)
+            self.print_watch_action.setChecked(False)
+            self.print_watch_action.blockSignals(False)
+            self._open_settings(tab="watch")
+            return
+        if bool(self.settings.ai_watch) != on:
+            self.settings.ai_watch = on
+            save_settings(self.settings)
+            self.print_watch.apply_settings()
+            self._status("Print watch " + ("on" if on else "off") + ".", 4000)
+        self._sync_print_watch_action()
+
+    def _sync_print_watch_action(self) -> None:
+        on = bool(self.settings.ai_watch)
+        if self.print_watch_action.isChecked() != on:
+            self.print_watch_action.blockSignals(True)
+            self.print_watch_action.setChecked(on)
+            self.print_watch_action.blockSignals(False)
+
+    def _open_settings(self, tab: str = "") -> None:
         # Don't let a background re-login with the old saved credentials run
         # while the user is testing new ones in Settings.
         retry_was_pending = self._login_retry_timer.isActive()
         self._login_retry_timer.stop()
         dialog = SettingsDialog(self.settings, self.controller, self)
+        if tab == "watch":
+            dialog.show_watch_tab()
         accepted = dialog.exec() == QDialog.Accepted
         if self.controller.logged_in:
             self._login_retries = 0
@@ -1190,6 +1229,9 @@ class MainWindow(QMainWindow):
                 # URL was cleared: stop the old camera instead of letting it
                 # keep streaming (and recording) with the stale URL.
                 self._stop_stream()
+                self.print_watch.set_stream(None)
+            self.print_watch.apply_settings()
+            self._sync_print_watch_action()
             # The dialog may have completed a fresh login, in which case the
             # main window's camera list is still empty — repopulate it so the
             # controls don't stay disabled after setup.
@@ -1272,5 +1314,6 @@ class MainWindow(QMainWindow):
             reader.wait()
         self._retired_readers.clear()
         self.update_manager.shutdown()
+        self.print_watch.shutdown()
         self.runner.stop()
         save_settings(self.settings)

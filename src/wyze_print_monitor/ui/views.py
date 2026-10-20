@@ -50,6 +50,7 @@ from ..captures import Capture, describe_age, recent_captures, thumbnail
 from .icons import (
     ICON_ADJUST,
     ICON_BELL,
+    ICON_WATCH,
     ICON_CAMERA,
     ICON_CLOSE,
     ICON_FIT,
@@ -113,6 +114,15 @@ QFrame#pill QToolButton#quality {{
 }}
 QFrame#pill QToolButton#quality::menu-indicator {{ image: none; width: 0; }}
 QFrame#pillSep {{ background: rgba(255, 255, 255, 40); }}
+QFrame#alert {{ background: rgba(58, 51, 36, 240); border: 1px solid #8a6d2f; border-radius: 10px; }}
+QFrame#alert[severity="failure"], QFrame#alert[severity="paused"],
+QFrame#alert[severity="pausing"], QFrame#alert[severity="pause_failed"] {{
+    background: rgba(70, 30, 30, 242); border-color: {RED};
+}}
+QLabel#alertTitle {{ font-size: 14px; font-weight: 600; color: #ffffff; }}
+QLabel#alertText {{ font-size: 12px; color: #e9dcc3; }}
+QPushButton#danger {{ background: #6b2a2a; color: #ffd6d6; }}
+QPushButton#danger:hover {{ background: #803232; }}
 QLabel#toast {{
     background: rgba(24, 25, 27, 225); color: {TEXT}; border-radius: 8px;
     padding: 6px 12px; font-size: 12px;
@@ -240,6 +250,63 @@ class _Pill(QFrame):
         self.row.addSpacing(4)
 
 
+class AlertBar(QFrame):
+    """A print-watch alert across the top of the video, with what to do."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("alert")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 10, 10, 10)
+        row.setSpacing(10)
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        self.title = QLabel()
+        self.title.setObjectName("alertTitle")
+        self.text = QLabel()
+        self.text.setObjectName("alertText")
+        self.text.setWordWrap(True)
+        texts.addWidget(self.title)
+        texts.addWidget(self.text)
+        row.addLayout(texts, 1)
+        self.view_btn = QPushButton("View snapshot")
+        self.view_btn.setObjectName("plain")
+        self.fine_btn = QPushButton("Looks fine")
+        self.fine_btn.setObjectName("plain")
+        self.fine_btn.setToolTip("Dismiss, and stay quiet for 30 minutes")
+        self.pause_btn = QPushButton("Pause print")
+        self.pause_btn.setObjectName("accent")
+        self.resume_btn = QPushButton("Resume")
+        self.resume_btn.setObjectName("accent")
+        self.stop_btn = QPushButton("Stop print…")
+        self.stop_btn.setObjectName("danger")
+        self.stop_btn.setToolTip("Asks before stopping")
+        for button in (self.view_btn, self.fine_btn, self.pause_btn, self.resume_btn, self.stop_btn):
+            button.setCursor(Qt.PointingHandCursor)
+            row.addWidget(button, 0, Qt.AlignVCenter)
+        self.hide()
+
+    def show_alert(self, alert) -> None:
+        if alert is None:
+            self.hide()
+            return
+        if self.property("severity") != alert.severity:
+            self.setProperty("severity", alert.severity)
+            self.style().unpolish(self)
+            self.style().polish(self)
+        icon = "🔊" if alert.severity == "sound" else "⚠"
+        self.title.setText(f"{icon}  {alert.title}")
+        self.text.setText(alert.message)
+        self.view_btn.setVisible(bool(alert.snapshot))
+        self.pause_btn.setVisible(alert.can_pause and alert.severity not in ("paused", "pausing"))
+        self.resume_btn.setVisible(alert.can_resume)
+        self.stop_btn.setVisible(alert.can_stop)
+        self.fine_btn.setText("Looks fine" if alert.severity in ("warning", "failure", "sound") else "Dismiss")
+        self.show()
+        self.raise_()
+
+
 class VideoView(QWidget):
     """The live picture with overlaid status and controls."""
 
@@ -270,6 +337,7 @@ class VideoView(QWidget):
         self.info.setObjectName("overlayInfo")
         self.rec_chip = _chip()
         self.timelapse_chip = _chip()
+        self.watch_chip = _chip()  # print watch status
         self.zoom_chip = QPushButton()
         self.zoom_chip.setObjectName("zoomChip")
         self.zoom_chip.setToolTip("Digital zoom — click to reset (scroll to zoom, drag to pan)")
@@ -278,7 +346,7 @@ class VideoView(QWidget):
         for widget in (self.state_chip, self.info):
             top.addWidget(widget)
         top.addStretch(1)
-        for widget in (self.zoom_chip, self.rec_chip, self.timelapse_chip):
+        for widget in (self.zoom_chip, self.watch_chip, self.rec_chip, self.timelapse_chip):
             top.addWidget(widget)
 
         # --- bottom overlay: floating toolbar + status toast
@@ -312,6 +380,8 @@ class VideoView(QWidget):
             self.pill.row.addWidget(widget)
         for button in self.pill.findChildren(QToolButton):
             button.setIconSize(QSize(18, 18))
+
+        self.alert = AlertBar(self)
 
         self.toast = QLabel(self)
         self.toast.setObjectName("toast")
@@ -369,6 +439,10 @@ class VideoView(QWidget):
         else:
             self._show_toolbar()
 
+    def show_alert(self, alert) -> None:
+        self.alert.show_alert(alert)
+        self._place_overlays()
+
     def show_toast(self, message: str, timeout_ms: int = 5000) -> None:
         if not message:
             return
@@ -392,6 +466,10 @@ class VideoView(QWidget):
 
     def _place_overlays(self) -> None:
         self.top.setGeometry(0, 0, self.width(), 44)
+        if not self.alert.isHidden():
+            aw = min(self.width() - 24, 920)
+            ah = self.alert.heightForWidth(aw) if self.alert.hasHeightForWidth() else self.alert.sizeHint().height()
+            self.alert.setGeometry((self.width() - aw) // 2, 48, aw, max(ah, self.alert.sizeHint().height()))
         self.pill.adjustSize()
         pw, ph = self.pill.sizeHint().width(), self.pill.sizeHint().height()
         pw = min(pw, self.width() - 16)
@@ -740,6 +818,10 @@ class CameraPanel(QWidget):
         self.notify_tile = ToggleTile(ICON_BELL, "Alerts")
         for i, tile in enumerate((self.siren_tile, self.spotlight_tile, self.motion_tile, self.notify_tile)):
             tiles.addWidget(tile, i // 2, i % 2)
+        # Print watch is the app's own switch (not a camera setting): full width.
+        self.watch_tile = ToggleTile(ICON_WATCH, "Print watch (AI)")
+        self.watch_tile.setToolTip("Watch prints for failures. Settings > Print watch for options.")
+        tiles.addWidget(self.watch_tile, 2, 0, 1, 2)
         layout.addLayout(tiles)
 
         # --- power

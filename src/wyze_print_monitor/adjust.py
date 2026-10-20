@@ -13,7 +13,7 @@ so the common case (tone tweaks only) costs one ``cv2.LUT`` per frame.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from functools import lru_cache
 
 import cv2
@@ -50,9 +50,15 @@ class ImageAdjustments:
     zoom: float = 1.0
     pan_x: float = 0.0
     pan_y: float = 0.0
+    # Balance the light automatically (see AutoLight); the sliders apply on top.
+    auto_light: bool = False
 
     def is_identity(self) -> bool:
         return self == IDENTITY
+
+    def manual(self) -> "ImageAdjustments":
+        """Just the hand-set part (what apply_adjustments does)."""
+        return replace(self, auto_light=False) if self.auto_light else self
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -181,6 +187,7 @@ def fit_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
 def apply_adjustments(frame: np.ndarray, adj: ImageAdjustments) -> np.ndarray:
     """Return ``frame`` (BGR uint8) with ``adj`` applied. Never modifies the
     input; returns it unchanged when there's nothing to do."""
+    adj = adj.manual()  # auto light is stateful: the stream thread runs AutoLight
     if adj.is_identity():
         return frame
     h, w = frame.shape[:2]
@@ -210,3 +217,58 @@ def apply_adjustments(frame: np.ndarray, adj: ImageAdjustments) -> np.ndarray:
     if out is frame:  # flips/zoom of zero effect still must not alias input
         out = frame.copy()
     return out
+
+
+class AutoLight:
+    """Keeps the picture well exposed as the room's light changes.
+
+    Every few frames it measures the brightness range of a small copy of
+    the picture, then stretches it (dark and bright ends) and bends the
+    midtones toward a comfortable level. Changes are eased in over a couple
+    of seconds so the image doesn't "pump", and the stretch is capped so a
+    dark, noisy scene isn't amplified into grain. One LUT per frame.
+    """
+
+    MEASURE_EVERY = 6
+    EASE = 0.15
+    TARGET_MID = 0.46
+    MAX_STRETCH = 3.0
+    GAMMA_RANGE = (0.6, 2.2)
+
+    def __init__(self) -> None:
+        self._count = 0
+        self._lo, self._hi, self._gamma = 0.0, 255.0, 1.0
+        self._fresh = True
+        self._lut: np.ndarray | None = None
+
+    def reset(self) -> None:
+        self.__init__()
+
+    @staticmethod
+    def measure(frame: np.ndarray) -> tuple[float, float, float]:
+        """(black point, white point, gamma) that would expose ``frame`` well."""
+        small = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        lo, hi = (float(v) for v in np.percentile(gray, (1.0, 99.5)))
+        span = max(hi - lo, 255.0 / AutoLight.MAX_STRETCH)
+        lo = min(lo, 255.0 - span)
+        hi = lo + span
+        mid = float(np.clip((np.median(gray) - lo) / span, 0.02, 0.98))
+        # y = x ** (1/gamma); choose gamma so the median lands on TARGET_MID.
+        gamma = math.log(mid) / math.log(AutoLight.TARGET_MID)
+        gamma = float(np.clip(gamma, *AutoLight.GAMMA_RANGE))
+        return lo, hi, gamma
+
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        if self._count % self.MEASURE_EVERY == 0:
+            lo, hi, gamma = self.measure(frame)
+            ease = 1.0 if self._fresh else self.EASE
+            self._fresh = False
+            self._lo += (lo - self._lo) * ease
+            self._hi += (hi - self._hi) * ease
+            self._gamma += (gamma - self._gamma) * ease
+            x = np.arange(256, dtype=np.float32)
+            y = np.clip((x - self._lo) / max(self._hi - self._lo, 1.0), 0.0, 1.0) ** (1.0 / self._gamma)
+            self._lut = np.clip(y * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        self._count += 1
+        return cv2.LUT(frame, self._lut)

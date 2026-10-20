@@ -6,9 +6,11 @@ native child window. This module locates those windows by their header
 labels so :mod:`ui.studio_dock` can place our own panels exactly over the
 Monitor and Others cards.
 
-Only read-only window queries plus two style/z-order tweaks are used; nothing
-here sends messages into Studio, so a busy Studio can never stall our UI
-thread through these calls. Everything degrades to "not found" off Windows.
+Only read-only window queries plus two style/z-order tweaks are used, and
+the one way we act on Studio — pressing its print Pause/Stop buttons for the
+print watcher — *posts* mouse messages (never sends), so a busy Studio can
+never stall our UI thread through these calls. Everything degrades to "not
+found" off Windows.
 
 The pure helpers at the top (no ctypes) hold the decision logic and are unit
 tested; the Win32 calls below them are thin wrappers.
@@ -25,10 +27,26 @@ PRINTER_LIST_LABEL = "My Printer"
 
 Rect = tuple[int, int, int, int]  # left, top, width, height (physical px)
 
+# Labels of the print controls on Studio's Device tab (Progress card).
+CONTROL_LABELS = {
+    "pause": ("pause", "pause print", "pause printing"),
+    "resume": ("resume", "resume print", "resume printing", "continue"),
+    "stop": ("stop", "stop print", "stop printing", "abort", "cancel print"),
+}
+
 
 # --------------------------------------------------------------------- pure logic
 def is_studio_title(title: str) -> bool:
     return any(marker in title for marker in STUDIO_TITLE_MARKERS)
+
+
+def classify_control(text: str) -> str | None:
+    """"pause" / "resume" / "stop" for a print-control button's label."""
+    label = " ".join(text.replace("&", "").split()).strip().lower()
+    for kind, labels in CONTROL_LABELS.items():
+        if label in labels:
+            return kind
+    return None
 
 
 def is_selected_row_color(rgb: tuple[int, int, int]) -> bool:
@@ -63,6 +81,18 @@ def camera_printer_selected(
     if selected is None:
         return previous
     return selected == configured_row - 1
+
+
+def may_control_print(selected_ok: bool | None, configured_row: int, row_count: int) -> bool:
+    """May we use (or trust) the print controls Studio shows right now?
+
+    Only when they're the camera's printer's: it's the selected one. With
+    "any printer" configured that's only certain if there's a single
+    printer — otherwise we can't know which printer the camera watches.
+    """
+    if selected_ok is not True:
+        return False
+    return configured_row > 0 or row_count <= 1
 
 
 def pick_printer_rows(
@@ -263,6 +293,33 @@ if sys.platform == "win32":
             return None
         return (value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF)
 
+    _PostMessageW = _sig(_user32.PostMessageW, wt.BOOL, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+    _IsWindowEnabled = _sig(_user32.IsWindowEnabled, wt.BOOL, wt.HWND)
+    _WM_MOUSEMOVE, _WM_LBUTTONDOWN, _WM_LBUTTONUP, _MK_LBUTTON = 0x0200, 0x0201, 0x0202, 0x0001
+
+    def find_print_controls(top: int) -> dict[str, int]:
+        """Studio's visible print-control buttons: {"pause"|"resume"|"stop": hwnd}."""
+        found: dict[str, int] = {}
+        for hwnd in _children(top):
+            kind = classify_control(_text(hwnd))
+            if kind and kind not in found and _IsWindowVisible(hwnd) and _IsWindowEnabled(hwnd):
+                _x, _y, w, h = window_rect(hwnd)
+                if w > 0 and h > 0:
+                    found[kind] = hwnd
+        return found
+
+    def press(hwnd: int) -> bool:
+        """Click a Studio button without touching the real mouse: post the
+        clicks to it (asynchronous, so a hung Studio can't block us)."""
+        if not is_window(hwnd):
+            return False
+        _x, _y, w, h = window_rect(hwnd)
+        point = ((h // 2) << 16) | (w // 2 & 0xFFFF)
+        ok = _PostMessageW(hwnd, _WM_MOUSEMOVE, 0, point)
+        ok = _PostMessageW(hwnd, _WM_LBUTTONDOWN, _MK_LBUTTON, point) and ok
+        ok = _PostMessageW(hwnd, _WM_LBUTTONUP, 0, point) and ok
+        return bool(ok)
+
     def ensure_clips_siblings(hwnd: int) -> None:
         """Stop a Studio card from painting over the panel we put above it.
 
@@ -297,4 +354,10 @@ else:  # pragma: no cover - non-Windows stubs
         return None
 
     def is_window(hwnd: int | None) -> bool:
+        return False
+
+    def find_print_controls(top: int) -> dict[str, int]:
+        return {}
+
+    def press(hwnd: int) -> bool:
         return False

@@ -16,7 +16,7 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
-from .adjust import IDENTITY, ImageAdjustments, apply_adjustments, fit_frame
+from .adjust import IDENTITY, AutoLight, ImageAdjustments, apply_adjustments, fit_frame
 from .quality import (
     AUTO,
     FULL_HD,
@@ -85,6 +85,11 @@ class StreamReader(QThread):
         # view, snapshots, clips and timelapses all match). Immutable, so the
         # GUI thread can swap it in with one assignment.
         self.adjustments: ImageAdjustments = IDENTITY
+        self._auto_light = AutoLight()
+        self._auto_light_idle = True
+        # The newest frame before hand-set adjustments (no zoom crop), for
+        # the print watcher to sample now and then. One reference swap.
+        self.last_frame: np.ndarray | None = None
         # Widest view on screen, in device pixels (0 = full size): display
         # images are scaled to this here instead of while painting.
         self.display_width = 0
@@ -233,7 +238,13 @@ class StreamReader(QThread):
         h, w = frame.shape[:2]
         self.frame_size = (w, h)  # what we deliver (after quality scaling)
         adjustments = self.adjustments  # one read: the GUI may swap it
-        if not adjustments.is_identity():
+        if adjustments.auto_light:
+            frame = self._auto_light.apply(frame)
+        elif not self._auto_light_idle:
+            self._auto_light.reset()  # turned off: start fresh next time
+        self._auto_light_idle = not adjustments.auto_light
+        self.last_frame = frame  # for the print watcher (see print_watch)
+        if not adjustments.manual().is_identity():
             try:
                 frame = apply_adjustments(frame, adjustments)
             except cv2.error:
