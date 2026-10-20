@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -668,16 +669,24 @@ class CapturesGrid(QWidget):
 
 
 class CameraPanel(QWidget):
-    """Everything about the camera, laid out to fill a tall side column."""
+    """Everything about the camera, laid out to fill a tall side column.
+
+    Two pages: the camera controls, and the picture adjustments. Adjusting
+    happens here — beside the video, never on top of it — so you see the
+    effect live; "Done" flips back.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        self.pages = QStackedWidget()
+        outer.addWidget(self.pages)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        outer.addWidget(scroll)
+        self.pages.addWidget(scroll)
+        self._build_adjust_page()
         body = QWidget()
         scroll.setWidget(body)
         layout = QVBoxLayout(body)
@@ -799,3 +808,47 @@ class CameraPanel(QWidget):
         self.details_label.setWordWrap(True)
         self.details_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.details_label)
+
+    # ------------------------------------------------------------------ pages
+    def _build_adjust_page(self) -> None:
+        page = QWidget()
+        column = QVBoxLayout(page)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        head = QHBoxLayout()
+        head.setContentsMargins(14, 12, 10, 6)
+        title = QLabel("Picture")
+        title.setObjectName("title")
+        hint = QLabel("Changes show live on the video.")
+        hint.setObjectName("dim")
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        titles.addWidget(title)
+        titles.addWidget(hint)
+        head.addLayout(titles, 1)
+        self.adjust_done_btn = QPushButton("Done")
+        self.adjust_done_btn.setObjectName("accent")
+        self.adjust_done_btn.setCursor(Qt.PointingHandCursor)
+        head.addWidget(self.adjust_done_btn, 0, Qt.AlignTop)
+        column.addLayout(head)
+        column.addWidget(_divider())
+        self._adjust_scroll = QScrollArea()
+        self._adjust_scroll.setWidgetResizable(True)
+        self._adjust_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        column.addWidget(self._adjust_scroll, 1)
+        self.pages.addWidget(page)
+        self.adjust_done_btn.clicked.connect(self.show_controls)
+
+    def set_adjust_widget(self, widget: QWidget) -> None:
+        """Install the adjustment controls (built by the binder: they need
+        the main window)."""
+        self._adjust_scroll.setWidget(widget)
+
+    def show_adjust(self) -> None:
+        self.pages.setCurrentIndex(1)
+
+    def show_controls(self) -> None:
+        self.pages.setCurrentIndex(0)
+
+    def adjusting(self) -> bool:
+        return self.pages.currentIndex() == 1

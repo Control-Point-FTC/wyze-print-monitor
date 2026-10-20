@@ -834,7 +834,8 @@ class MainWindow(QMainWindow):
             # restores them when fullscreen ends any other way (closing the
             # window while docked, showNormal from the tray...).
             normal = not self.isFullScreen()
-            self._side_card.setVisible(normal)
+            # In fullscreen the camera column stays only while adjusting.
+            self._side_card.setVisible(normal or self.camera_panel.adjusting())
             self.menuBar().setVisible(normal)
             self.statusBar().setVisible(normal)
         super().changeEvent(event)
@@ -891,6 +892,10 @@ class MainWindow(QMainWindow):
         self.update_btn.setText(f"Update to {info.version}")
         self.update_btn.setToolTip(f"Wyze Print Monitor {info.version} is available (you have {__version__}).")
         self.update_btn.show()
+
+    def set_side_panel_visible(self, visible: bool) -> None:
+        """Show / hide the camera column (used while adjusting in fullscreen)."""
+        self._side_card.setVisible(visible or not self.isFullScreen())
 
     def save_settings_soon(self) -> None:
         """Save settings once rapid changes (slider drags) settle."""

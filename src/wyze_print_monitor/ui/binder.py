@@ -12,49 +12,19 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, QPoint, Qt, QTimer
-from PySide6.QtWidgets import QAbstractButton, QMenu, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QTimer
+from PySide6.QtWidgets import QAbstractButton, QMenu
 
 from ..adjust import LIMITS, screen_to_source_delta
 from .adjust_panel import ImageAdjustPanel
-from .styles import DIVIDER
 from ..quality import LABELS as QUALITY_LABELS
 from ..quality import QUALITIES
 from ..wyze_control import friendly_model
-from .views import CHIP_STYLES, VIEWS_QSS, CameraPanel, ToggleTile, VideoView, set_chip
+from .views import CHIP_STYLES, CameraPanel, ToggleTile, VideoView, set_chip
 
 SYNC_MS = 200
 CAPTURES_EVERY_S = 20.0
 HOLD_LAST_FRAME_S = 5.0  # keep the last picture through a reconnect this short
-
-
-class AdjustPopup(QWidget):
-    """All picture adjustments, popping up next to the button that opened it."""
-
-    def __init__(self, main) -> None:
-        super().__init__(None, Qt.Popup | Qt.FramelessWindowHint)
-        self.setObjectName("surface")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(
-            VIEWS_QSS + f"QWidget#surface {{ border: 1px solid {DIVIDER}; border-radius: 10px; }}"
-        )
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.panel = ImageAdjustPanel(main)
-        layout.addWidget(self.panel)
-        self.setFixedWidth(340)
-
-    def show_near(self, anchor: QWidget) -> None:
-        """Open above ``anchor`` if there's room, else below; kept on screen."""
-        self.adjustSize()
-        screen = anchor.screen().availableGeometry()
-        top_left = anchor.mapToGlobal(QPoint(0, 0))
-        y = top_left.y() - self.height() - 8
-        if y < screen.top():
-            y = top_left.y() + anchor.height() + 8
-        x = min(max(top_left.x() + anchor.width() // 2 - self.width() // 2, screen.left()), screen.right() - self.width())
-        self.move(x, max(min(y, screen.bottom() - self.height()), screen.top()))
-        self.show()
 
 
 def _forward(view_button: QAbstractButton, control: QAbstractButton) -> None:
@@ -106,7 +76,6 @@ class PanelBinder(QObject):
         self.main = main
         self.video = video
         self.camera = camera
-        self._popup: AdjustPopup | None = None
         self._not_live_since: float | None = None
         self._last_captures = 0.0
         self._wire()
@@ -135,10 +104,6 @@ class PanelBinder(QObject):
             except (RuntimeError, TypeError):
                 pass
         self.camera.captures.shutdown()
-        if self._popup is not None:
-            self._popup.hide()
-            self._popup.deleteLater()
-            self._popup = None
 
     # ------------------------------------------------------------------ wiring
     def _wire(self) -> None:
@@ -151,7 +116,11 @@ class PanelBinder(QObject):
         v.window_btn.clicked.connect(m.show_window)
         v.settings_btn.clicked.connect(m._open_settings)
         v.update_btn.clicked.connect(m.update_manager.install)
-        v.adjust_btn.clicked.connect(lambda: self._show_popup(v.adjust_btn))
+        # Adjusting opens in the camera panel beside the video, not over it.
+        c.set_adjust_widget(ImageAdjustPanel(m))
+        v.adjust_btn.setCheckable(True)
+        v.adjust_btn.clicked.connect(self._toggle_adjust)
+        c.pages.currentChanged.connect(lambda _index: self._sync_adjust_state())
         v.fit_btn.toggled.connect(self._on_fit_toggled)
         v.zoom_by.connect(self._zoom_by)
         v.pan_by.connect(self._pan_by)
@@ -171,7 +140,7 @@ class PanelBinder(QObject):
         _show_fill(v, bool(m.settings.video_fill))
 
         c.settings_btn.clicked.connect(m._open_settings)
-        c.more_picture_btn.clicked.connect(lambda: self._show_popup(c.more_picture_btn))
+        c.more_picture_btn.clicked.connect(self._open_adjust)
         c.open_folder_btn.clicked.connect(lambda: m._open_folder(m.settings.resolved_snapshot_dir()))
         for view_button, control in (
             (c.siren_tile, m.siren_btn),
@@ -189,10 +158,25 @@ class PanelBinder(QObject):
         for name, (slider, _value) in c.quick_sliders.items():
             slider.valueChanged.connect(lambda value, n=name: self._on_quick_slider(n, value))
 
-    def _show_popup(self, anchor: QWidget) -> None:
-        if self._popup is None:
-            self._popup = AdjustPopup(self.main)
-        self._popup.show_near(anchor)
+    def _toggle_adjust(self) -> None:
+        if self.camera.adjusting():
+            self.camera.show_controls()
+        else:
+            self._open_adjust()
+
+    def _open_adjust(self) -> None:
+        self.camera.show_adjust()
+        self._sync_adjust_state()
+
+    def _sync_adjust_state(self) -> None:
+        adjusting = self.camera.adjusting()
+        if self.video.adjust_btn.isChecked() != adjusting:
+            self.video.adjust_btn.setChecked(adjusting)
+        # In fullscreen the camera column is hidden; bring it in while
+        # adjusting so the controls are reachable, and tuck it away after.
+        main = self.main
+        if self.video.window() is main and main.isFullScreen():
+            main.set_side_panel_visible(adjusting)
 
     def _on_fit_toggled(self, fill: bool) -> None:
         self.main.settings.video_fill = fill
