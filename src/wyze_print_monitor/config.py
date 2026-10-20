@@ -104,6 +104,8 @@ class Settings:
     check_updates: bool = True
     # Video views: fill the space (crop) instead of fitting the whole picture.
     video_fill: bool = False
+    # Stream quality: auto | 1080p | 720p | 360p (see quality.py).
+    stream_quality: str = "auto"
 
     def resolved_snapshot_dir(self) -> str:
         if self.snapshot_dir:

@@ -112,3 +112,12 @@ def test_newest_login_wins_over_a_late_older_one():
     assert controller._client is None
     assert asyncio.run(controller._do_login("e", "p", "k", "a", seq=2)) is True
     assert isinstance(controller._client, FakeClient)
+
+
+def test_friendly_model_names_hide_device_codes():
+    from wyze_print_monitor.wyze_control import friendly_model
+
+    assert friendly_model("WYZE_CAKP2JFUS") == "Wyze Cam v3"
+    assert friendly_model("wyze_cakp2jfus") == "Wyze Cam v3"
+    assert friendly_model("SOME_NEW_CODE") == "Wyze camera"  # never echo raw codes
+    assert friendly_model("—") == "Wyze camera"

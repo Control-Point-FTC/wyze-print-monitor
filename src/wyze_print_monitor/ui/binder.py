@@ -18,6 +18,9 @@ from PySide6.QtWidgets import QAbstractButton, QMenu, QVBoxLayout, QWidget
 from ..adjust import LIMITS, screen_to_source_delta
 from .adjust_panel import ImageAdjustPanel
 from .styles import DIVIDER
+from ..quality import LABELS as QUALITY_LABELS
+from ..quality import QUALITIES
+from ..wyze_control import friendly_model
 from .views import CHIP_STYLES, VIEWS_QSS, CameraPanel, ToggleTile, VideoView, set_chip
 
 SYNC_MS = 200
@@ -153,6 +156,14 @@ class PanelBinder(QObject):
         v.zoom_by.connect(self._zoom_by)
         v.pan_by.connect(self._pan_by)
         v.zoom_chip.clicked.connect(lambda: m.set_adjustments(replace(m.adjustments, zoom=1.0, pan_x=0.0, pan_y=0.0)))
+        quality_menu = QMenu(v.quality_btn)
+        self._quality_actions = {}
+        for key in QUALITIES:
+            action = quality_menu.addAction(QUALITY_LABELS[key])
+            action.setCheckable(True)
+            action.triggered.connect(lambda _=False, k=key: m.set_stream_quality(k))
+            self._quality_actions[key] = action
+        v.quality_btn.setMenu(quality_menu)
         folders = QMenu(v.folder_btn)
         folders.addAction("Open snapshot folder", lambda: m._open_folder(m.settings.resolved_snapshot_dir()))
         folders.addAction("Open video folder", lambda: m._open_folder(m.settings.resolved_video_dir()))
@@ -300,6 +311,15 @@ class PanelBinder(QObject):
             else:
                 v.show_placeholder("Camera stream unavailable.\nIf the Wyze app shows it offline, unplug it for 10 seconds.")
 
+        chosen = m.settings.stream_quality
+        for key, action in self._quality_actions.items():
+            if action.isChecked() != (key == chosen):
+                action.setChecked(key == chosen)
+        shown = m.active_quality or ("Auto" if chosen == "auto" else chosen)
+        if v.quality_btn.text() != shown:
+            v.quality_btn.setText(shown)
+            v.quality_btn.setToolTip(f"Stream quality: {QUALITY_LABELS[chosen]}")
+            v._place_overlays()
         _mirror(v.snapshot_btn, m.snapshot_btn)
         _mirror(v.record_btn, m.record_btn)
         _mirror(v.timelapse_btn, m.timelapse_btn)
@@ -343,10 +363,7 @@ class PanelBinder(QObject):
         if c.name_label.text() != name:
             c.name_label.setText(name)
         if connected and selected is not None:
-            online = selected.is_online
-            status = (
-                f"<span style='color:#62d361'>●</span> Connected · {'online' if online else 'offline in Wyze'}"
-            )
+            status = "<span style='color:#62d361'>●</span> Connected to Wyze"
         elif connected:
             status = "<span style='color:#e0a84a'>●</span> Signed in — pick a camera"
         else:
@@ -385,8 +402,13 @@ class PanelBinder(QObject):
 
         # Details
         if selected is not None:
-            parts = [m.info_model.text(), f"FW {m.info_firmware.text()}", m.info_ip.text()]
-            details = " · ".join(p for p in parts if p and p not in ("—", "FW —"))
+            # A friendly model name and the firmware; no device codes, MAC or
+            # network address on screen.
+            parts = [friendly_model(m.info_model.text())]
+            firmware = m.info_firmware.text()
+            if firmware and firmware != "—":
+                parts.append(f"firmware {firmware}")
+            details = " · ".join(p for p in parts if p)
         else:
             details = "Camera details appear once connected."
         if c.details_label.text() != details:

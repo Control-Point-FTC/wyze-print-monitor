@@ -70,6 +70,10 @@ needed.
 Everything secret (RTSP password, Wyze password, API keys) is stored in
 **Windows Credential Manager**, never in a file.
 
+Your settings live in `%APPDATA%\wyze-print-monitor\settings.json` and your
+secrets in Credential Manager — outside the app's folder — so they're kept
+through updates (and even an uninstall / reinstall).
+
 ## Using it
 
 The same two pieces appear inside eufyMake Studio and in the app's own
@@ -115,6 +119,23 @@ the docked toolbar. Closing it while Studio is open just hides it; quit
 from **File → Exit** or the tray icon.
 
 ![The full window](docs/screenshots/main-window.png)
+
+### Video quality
+
+The quality chip on the video toolbar (or Settings → *Video quality*):
+
+- **Auto** (recommended) — full HD while everything keeps up. If fewer than
+  10 frames a second reach the screen for a few seconds (busy PC or slow
+  network), it drops to **720p**, then to the camera's **360p** stream if
+  needed, and tries the next level up again later.
+- **1080p** — always full HD.
+- **720p** — the HD stream scaled down right after decoding: smooth on
+  slower PCs, smaller recordings.
+- **360p** — the camera's low-bandwidth stream.
+
+All video work (decoding, scaling, adjustments, recording) happens off the
+UI thread, and the picture always shows the newest frame — it never falls
+behind the camera when the PC is busy.
 
 ### Picture adjustments
 
