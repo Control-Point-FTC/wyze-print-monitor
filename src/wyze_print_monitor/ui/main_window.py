@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 from ..async_runner import AsyncRunner
 from ..adjust import ImageAdjustments
 from ..capture import ClipRecorder, StreamReader, snapshot_path
+from ..quality import display_width_for
 from ..quality import normalize as normalize_quality
 from ..config import (
     SECRET_API_KEY,
@@ -671,20 +672,34 @@ class MainWindow(QMainWindow):
     def _display_width(self) -> int:
         """Widest visible view in device pixels: frames are scaled to this on
         the stream thread (0 while nothing is visible = no scaling)."""
+        w, h = self._reader.frame_size if self._reader is not None else (0, 0)
+        aspect = w / h if w and h else 16 / 9
+        fill = bool(self.settings.video_fill)
         widths = [
-            int(view.width() * view.devicePixelRatioF())
+            display_width_for(
+                view.width() * view.devicePixelRatioF(),
+                view.height() * view.devicePixelRatioF(),
+                aspect,
+                fill,
+            )
             for view in self.video_views
             if view.isVisible()
         ]
         return max(widths, default=0)
 
-    def _on_recording_failed(self, error: str) -> None:
+    def _on_recording_failed(self, failed, error: str) -> None:
         # e.g. folder became unwritable mid-recording: stop cleanly instead of
         # claiming a good clip at the end.
-        if self._recorder is not None:
-            self._recorder.close()
-            self._recorder = None
-            self._rec_start = None
+        if failed is not self._recorder:
+            # Stale: that recording was already stopped (or replaced) here.
+            failed.close()
+            return
+        self._recorder = None
+        self._rec_start = None
+        # Detach under the stream's lock before closing: a sink update in
+        # between may have re-attached it.
+        self._update_sinks()
+        failed.close()
         self.record_btn.setChecked(False)
         self.record_btn.setText("Record")
         self._update_session_panel()

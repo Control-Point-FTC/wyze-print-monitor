@@ -71,7 +71,7 @@ class StreamReader(QThread):
     frame_ready = Signal()  # a new frame is waiting in the mailbox: take_latest()
     state_changed = Signal(str, str)  # state, detail message
     # states: "connecting" | "live" | "reconnecting" | "stopped" | "error"
-    recording_failed = Signal(str)  # the clip writer failed; recording stopped
+    recording_failed = Signal(object, str)  # (the recorder that failed, message)
     quality_changed = Signal(str)  # human label of what's being shown now
 
     def __init__(self, url: str, parent=None, quality: str = AUTO) -> None:
@@ -166,6 +166,10 @@ class StreamReader(QThread):
                     self._auto.drop_substream()
                     self._substream = None
                     continue
+                if self.quality == AUTO and self._auto.probe_failed(time.monotonic()):
+                    # Stepping up failed: go back to the stream that worked.
+                    self.state_changed.emit("live", "Couldn't switch up; staying on the lower quality.")
+                    continue
                 self.state_changed.emit(
                     "reconnecting", f"Cannot open stream, retrying in {backoff:.0f}s…"
                 )
@@ -239,8 +243,9 @@ class StreamReader(QThread):
                 try:
                     self._recorder.write(frame)
                 except IOError as exc:
-                    self._recorder = None
-                    self.recording_failed.emit(str(exc))
+                    failed, self._recorder = self._recorder, None
+                    # Name the recorder: the GUI may have swapped it since.
+                    self.recording_failed.emit(failed, str(exc))
             if self._timelapse is not None:
                 self._timelapse.maybe_capture(frame)
         image = to_display_image(frame, self.display_width)

@@ -92,6 +92,18 @@ class AutoQuality:
             self.levels.remove(LOW)
             self.index = min(self.index, len(self.levels) - 1)
 
+    def probe_failed(self, now: float) -> bool:
+        """The level we just stepped up to couldn't even be opened. Go back
+        to the lower level that was working and wait longer before the next
+        try. Returns True if that happened (False: not probing)."""
+        if not self._probing or self.index >= len(self.levels) - 1:
+            return False
+        self._probing = False
+        self.index += 1
+        self._since = now
+        self._retry_after = min(self._retry_after * 2, self.MAX_RETRY_S)
+        return True
+
     def update(self, fps: float, now: float) -> str | None:
         """Returns the new level when it should change, else None."""
         if not self._since:
@@ -117,3 +129,19 @@ class AutoQuality:
             self._since = now
             return self.level
         return None
+
+
+def display_width_for(view_w: float, view_h: float, aspect: float, fill: bool) -> int:
+    """Width (device px) of the image a view needs to look sharp.
+
+    Fit draws the whole picture inside the view: as wide as the view, or
+    less if the view is taller than the picture's shape. Fill covers the
+    view and crops: as wide as the view, or *more* when the view is
+    taller/narrower than the picture — shrinking to the view's width alone
+    would make Fill enlarge a too-small image and look soft.
+    """
+    if view_w <= 0 or view_h <= 0 or aspect <= 0:
+        return 0
+    width_for_height = view_h * aspect
+    needed = max(view_w, width_for_height) if fill else min(view_w, width_for_height)
+    return int(round(needed))

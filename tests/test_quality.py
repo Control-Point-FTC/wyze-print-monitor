@@ -69,3 +69,26 @@ def test_drop_substream_when_it_turns_out_unavailable():
     assert auto.level == "360p"
     auto.drop_substream()
     assert auto.level == "720p"
+
+
+def test_failed_step_up_returns_to_the_working_level_and_backs_off():
+    auto = AutoQuality(has_substream=True)
+    _feed(auto, 5.0, 0, 6)                      # -> 360p at t=10
+    assert auto.level == "360p"
+    assert auto.update(20.0, 10 + 300) == "720p"  # tries one level up
+    assert auto.probe_failed(312) is True      # ...but it won't open
+    assert auto.level == "360p"                # back to what worked
+    assert auto.update(20.0, 312 + 300) is None  # and waits longer (doubled)
+    assert auto.update(20.0, 312 + 600) == "720p"
+    assert AutoQuality(True).probe_failed(0) is False  # only after a step up
+
+
+def test_display_width_accounts_for_fill_and_tall_views():
+    from wyze_print_monitor.quality import display_width_for
+
+    wide, tall = (1600, 700), (640, 720)
+    assert display_width_for(*wide, 16 / 9, fill=False) == 1244   # fit: limited by height
+    assert display_width_for(*wide, 16 / 9, fill=True) == 1600    # fill: full width
+    assert display_width_for(*tall, 16 / 9, fill=False) == 640
+    assert display_width_for(*tall, 16 / 9, fill=True) == 1280    # fill in a tall view needs more
+    assert display_width_for(0, 100, 16 / 9, fill=True) == 0
