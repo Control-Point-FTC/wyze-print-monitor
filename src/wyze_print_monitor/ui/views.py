@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..captures import Capture, describe_age, thumbnail
+from ..captures import Capture, describe_age, recent_captures, thumbnail
 from .icons import (
     ICON_ADJUST,
     ICON_BELL,
@@ -533,6 +533,7 @@ class CapturesGrid(QWidget):
     """Thumbnails of the latest snapshots / clips / timelapses."""
 
     _thumb_ready = Signal(str, float, object)  # path, mtime, QImage | None
+    _scan_ready = Signal(object)  # list[Capture]
 
     COLUMNS = 3
 
@@ -549,16 +550,43 @@ class CapturesGrid(QWidget):
         self._pending: set[tuple[str, float]] = set()
         self._pool = ThreadPoolExecutor(max_workers=1)
         self._thumb_ready.connect(self._on_thumb)
+        self._scan_ready.connect(self.set_items)
+        self._scanning = False
         self.empty = QLabel("No captures yet. Take a snapshot or record a clip.")
         self.empty.setObjectName("dim")
         self.empty.setWordWrap(True)
         self._grid.addWidget(self.empty, 0, 0, 1, self.COLUMNS)
 
-    def set_items(self, items: list[Capture]) -> None:
+    def request_scan(self, snapshot_dir: str, video_dir: str) -> None:
+        """Rescan the capture folders on the worker thread, then show them."""
+        if self._scanning:
+            return
+        self._scanning = True
+
+        def work() -> None:
+            try:
+                items = recent_captures(snapshot_dir, video_dir)
+            except Exception:  # noqa: BLE001 - a bad folder just shows nothing new
+                items = None
+            try:
+                self._scan_ready.emit(items)
+            except RuntimeError:
+                pass  # view already gone
+
+        self._pool.submit(work)
+
+    def set_items(self, items: list[Capture] | None) -> None:
+        self._scanning = False
+        if items is None:
+            return
         if [(c.path, c.mtime) for c in items] == [(c.path, c.mtime) for c in self._items]:
             self._refresh_captions()
             return
         self._items = items
+        # Keep thumbnails only for what's on screen: the cache can't grow
+        # over a long session, and stale versions of a file are dropped.
+        current = {(c.path, c.mtime) for c in items}
+        self._cache = {key: pixmap for key, pixmap in self._cache.items() if key in current}
         for button in self._buttons:
             self._grid.removeWidget(button)
             button.deleteLater()
@@ -617,8 +645,8 @@ class CapturesGrid(QWidget):
     def _on_thumb(self, path: str, mtime: float, image) -> None:
         key = (path, mtime)
         self._pending.discard(key)
-        if image is None:
-            return
+        if image is None or key not in {(c.path, c.mtime) for c in self._items}:
+            return  # unreadable, or no longer shown
         pixmap = QPixmap.fromImage(image)
         self._cache[key] = pixmap
         for button, item in zip(self._buttons, self._items):

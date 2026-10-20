@@ -15,8 +15,7 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer
 from PySide6.QtWidgets import QAbstractButton, QMenu, QVBoxLayout, QWidget
 
-from ..adjust import LIMITS
-from ..captures import recent_captures
+from ..adjust import LIMITS, screen_to_source_delta
 from .adjust_panel import ImageAdjustPanel
 from .styles import DIVIDER
 from .views import CHIP_STYLES, VIEWS_QSS, CameraPanel, ToggleTile, VideoView, set_chip
@@ -80,6 +79,15 @@ def _mirror(view_button: QAbstractButton, control: QAbstractButton) -> None:
         view_button.blockSignals(False)
 
 
+def _show_fill(view: VideoView, fill: bool) -> None:
+    """Apply Fit/Fill to a view and its button, without re-triggering it."""
+    view.set_fill(fill)
+    if view.fit_btn.isChecked() != fill:
+        view.fit_btn.blockSignals(True)
+        view.fit_btn.setChecked(fill)
+        view.fit_btn.blockSignals(False)
+
+
 def _toggle_state(control: QAbstractButton) -> str:
     """'On' / 'Off' / 'Unknown' / '…' from a MainWindow toggle's label."""
     text = control.text()
@@ -102,7 +110,7 @@ class PanelBinder(QObject):
         main.video_views.append(video)
         main.status_message.connect(self._on_status)
         main.adjustments_changed.connect(self._on_adjustments)
-        main.capture_saved.connect(lambda _path: self._refresh_captures(force=True))
+        main.capture_saved.connect(self._on_capture_saved)
         self._on_adjustments(main.adjustments)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.sync)
@@ -117,6 +125,7 @@ class PanelBinder(QObject):
         for signal, slot in (
             (self.main.status_message, self._on_status),
             (self.main.adjustments_changed, self._on_adjustments),
+            (self.main.capture_saved, self._on_capture_saved),
         ):
             try:
                 signal.disconnect(slot)
@@ -148,10 +157,7 @@ class PanelBinder(QObject):
         folders.addAction("Open snapshot folder", lambda: m._open_folder(m.settings.resolved_snapshot_dir()))
         folders.addAction("Open video folder", lambda: m._open_folder(m.settings.resolved_video_dir()))
         v.folder_btn.setMenu(folders)
-        v.fit_btn.blockSignals(True)
-        v.fit_btn.setChecked(bool(m.settings.video_fill))
-        v.fit_btn.blockSignals(False)
-        v.set_fill(bool(m.settings.video_fill))
+        _show_fill(v, bool(m.settings.video_fill))
 
         c.settings_btn.clicked.connect(m._open_settings)
         c.more_picture_btn.clicked.connect(lambda: self._show_popup(c.more_picture_btn))
@@ -181,7 +187,7 @@ class PanelBinder(QObject):
         self.main.settings.video_fill = fill
         self.main.save_settings_soon()
         for view in self.main.video_views:
-            view.set_fill(fill)
+            _show_fill(view, fill)
 
     def _zoom_by(self, factor: float) -> None:
         adj = self.main.adjustments
@@ -196,6 +202,8 @@ class PanelBinder(QObject):
 
     def _pan_by(self, dx: float, dy: float) -> None:
         adj = self.main.adjustments
+        # Pan is applied before rotate/flip: map the on-screen drag back.
+        dx, dy = screen_to_source_delta(dx, dy, adj.rotation, adj.flip_h, adj.flip_v)
         lo, hi = LIMITS["pan_x"]
         self.main.set_adjustments(
             replace(
@@ -230,6 +238,9 @@ class PanelBinder(QObject):
         if message and message != "Ready":  # startup noise, not news
             self.video.show_toast(message, timeout)
 
+    def _on_capture_saved(self, _path: str) -> None:
+        self._refresh_captures(force=True)
+
     def _refresh_captures(self, force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self._last_captures < CAPTURES_EVERY_S:
@@ -237,7 +248,9 @@ class PanelBinder(QObject):
             return
         self._last_captures = now
         s = self.main.settings
-        self.camera.captures.set_items(recent_captures(s.resolved_snapshot_dir(), s.resolved_video_dir()))
+        # Scanned on the grid's worker thread: big or slow folders must not
+        # stall the video.
+        self.camera.captures.request_scan(s.resolved_snapshot_dir(), s.resolved_video_dir())
 
     # ------------------------------------------------------------------ sync
     def sync(self) -> None:
@@ -267,6 +280,7 @@ class PanelBinder(QObject):
         else:
             set_chip(v.timelapse_chip, "")
         v.set_live(state == "live")
+        _show_fill(v, bool(m.settings.video_fill))
 
         # Hold the last frame through a short reconnect; afterwards explain.
         if state == "live":

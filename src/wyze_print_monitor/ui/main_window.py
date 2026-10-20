@@ -8,7 +8,7 @@ import time
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -761,12 +761,19 @@ class MainWindow(QMainWindow):
         if self._close_pending:
             QTimer.singleShot(0, self.quit_app)
 
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "_side_card"):
+            # Fullscreen is just the picture: no side panel, menu or status
+            # bar. Following the window state (rather than the toggle) also
+            # restores them when fullscreen ends any other way (closing the
+            # window while docked, showNormal from the tray...).
+            normal = not self.isFullScreen()
+            self._side_card.setVisible(normal)
+            self.menuBar().setVisible(normal)
+            self.statusBar().setVisible(normal)
+        super().changeEvent(event)
+
     def _toggle_fullscreen(self) -> None:
-        going_full = not self.isFullScreen()
-        # Fullscreen is just the picture: no side panel, menu or status bar.
-        self._side_card.setVisible(not going_full)
-        self.menuBar().setVisible(not going_full)
-        self.statusBar().setVisible(not going_full)
         if self.isFullScreen():
             self.showNormal()
             if self._fullscreen_from_hidden:

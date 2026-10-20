@@ -110,3 +110,30 @@ def test_fit_frame_letterboxes_instead_of_stretching():
     assert out[540, 960].min() == 200  # picture in the middle, not stretched
     same = _frame(w=1920, h=1080)
     assert fit_frame(same, (1920, 1080)) is same
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("flip_h, flip_v", [(False, False), (True, False), (False, True), (True, True)])
+def test_dragging_moves_the_picture_with_the_mouse(rotation, flip_h, flip_v):
+    """Drag right/down on the displayed picture -> content moves right/down,
+    whatever the rotation and flips (pan is applied before them)."""
+    from wyze_print_monitor.adjust import screen_to_source_delta
+
+    frame = np.zeros((200, 200, 3), np.uint8)
+    frame[95:105, 95:105] = 255  # marker in the middle
+
+    def marker(adj):
+        out = apply_adjustments(frame, adj)
+        ys, xs = np.nonzero(out[..., 0] > 128)
+        return xs.mean(), ys.mean()
+
+    base = ImageAdjustments(zoom=2.0, rotation=rotation, flip_h=flip_h, flip_v=flip_v)
+    x0, y0 = marker(base)
+    for screen_dx, screen_dy in ((0.3, 0.0), (0.0, 0.3)):
+        # VideoView emits "-movement" (dragging right reveals what's left).
+        dx, dy = screen_to_source_delta(-screen_dx, -screen_dy, rotation, flip_h, flip_v)
+        x1, y1 = marker(ImageAdjustments(zoom=2.0, pan_x=dx, pan_y=dy, rotation=rotation, flip_h=flip_h, flip_v=flip_v))
+        if screen_dx:
+            assert x1 > x0 + 5 and abs(y1 - y0) < 2
+        else:
+            assert y1 > y0 + 5 and abs(x1 - x0) < 2

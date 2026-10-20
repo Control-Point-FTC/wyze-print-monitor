@@ -137,6 +137,29 @@ def _crop(frame: np.ndarray, zoom: float, pan_x: float, pan_y: float) -> np.ndar
     return frame[y0 : y0 + ch, x0 : x0 + cw]
 
 
+def screen_to_source_delta(
+    dx: float, dy: float, rotation: int, flip_h: bool, flip_v: bool
+) -> tuple[float, float]:
+    """Map a movement seen on screen back into the camera's own axes.
+
+    ``apply_adjustments`` crops (zoom/pan) first and flips/rotates after, so
+    a drag on the displayed picture has to be un-rotated, then un-flipped,
+    before it can change ``pan_x`` / ``pan_y``.
+    """
+    rotation %= 360
+    if rotation == 90:  # display (x', y') = (h - y, x)
+        dx, dy = dy, -dx
+    elif rotation == 180:
+        dx, dy = -dx, -dy
+    elif rotation == 270:  # display (x', y') = (y, w - x)
+        dx, dy = -dy, dx
+    if flip_h:
+        dx = -dx
+    if flip_v:
+        dy = -dy
+    return dx, dy
+
+
 def fit_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     """Fit ``frame`` into ``size`` (width, height) keeping its proportions,
     padding with black. A video file has one fixed size, so a frame whose
