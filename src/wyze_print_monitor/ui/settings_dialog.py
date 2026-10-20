@@ -156,6 +156,9 @@ class SettingsDialog(QDialog):
             self.dock_row_spin.setEnabled(False)
             self.dock_check.setToolTip("Windows only")
         form.addRow(self.dock_check)
+        self.updates_check = QCheckBox("Check for updates automatically")
+        self.updates_check.setChecked(settings.check_updates)
+        form.addRow(self.updates_check)
         form.addRow("Printer with camera", self.dock_row_spin)
 
         layout.addLayout(form)
@@ -247,6 +250,7 @@ class SettingsDialog(QDialog):
         s.video_dir = self.video_edit.text().strip()
         s.always_on_top = self.on_top_check.isChecked()
         s.dock_in_studio = self.dock_check.isChecked()
+        s.check_updates = self.updates_check.isChecked()
         s.dock_printer_row = self.dock_row_spin.value()
         mac =self.camera_combo.currentData()
         if mac:

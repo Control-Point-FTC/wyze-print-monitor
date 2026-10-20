@@ -100,6 +100,8 @@ class Settings:
     dock_printer_row: int = 1
     # Picture adjustments (adjust.ImageAdjustments.to_dict()); {} = none.
     image_adjustments: dict = field(default_factory=dict)
+    # Look for new releases on GitHub at startup and every few hours.
+    check_updates: bool = True
 
     def resolved_snapshot_dir(self) -> str:
         if self.snapshot_dir:

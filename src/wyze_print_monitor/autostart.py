@@ -22,6 +22,9 @@ def supported() -> bool:
 
 def launch_command() -> str:
     """Quoted command line registered for autostart."""
+    if getattr(sys, "frozen", False):
+        # Installed build (PyInstaller): the app is its own executable.
+        return f'"{sys.executable}"'
     exe = shutil.which("wyze-print-monitor")
     if exe:
         return f'"{exe}"'

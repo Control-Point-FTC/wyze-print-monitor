@@ -1,99 +1,163 @@
-# Wyze Print Monitor
+<p align="center">
+  <img src="src/wyze_print_monitor/assets/icon.png" width="128" alt="Wyze Print Monitor logo">
+</p>
 
-A desktop companion for 3D printing: live view of a **Wyze Cam V3** (mounted
-on the printer) plus a real camera control panel — power, restart, siren,
-spotlight, motion detection, and notifications — alongside snapshot, clip
-recording, and print timelapses.
+<h1 align="center">Wyze Print Monitor</h1>
 
-Built because slicer monitor tabs (e.g. eufyMake Studio's Device → Monitor)
-only show a printer's *built-in* camera and offer no way to plug in an
-external camera. On Windows the app plugs itself **into eufyMake Studio's
-Device tab**; anywhere else it runs as its own window next to the slicer.
+<p align="center">
+  Watch and control your 3D printer's <b>Wyze Cam V3</b> — right inside <b>eufyMake Studio</b>.
+</p>
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![Qt](https://img.shields.io/badge/Qt-PySide6-green) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+<p align="center">
+  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Control-Point-FTC/wyze-print-monitor?label=download&color=62d361"></a>
+  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Control-Point-FTC/wyze-print-monitor/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-lightgrey"></a>
+</p>
 
-## Inside eufyMake Studio (Windows)
+<p align="center">
+  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest"><b>⬇ Download the latest installer</b></a>
+</p>
 
-![Wyze feed docked in eufyMake Studio](docs/screenshots/studio-dock.png)
+---
 
-With eufyMake Studio (or AnkerMake Studio) open, the app embeds two panels
-straight into Studio's **Device** tab:
+eufyMake Studio's Device tab can only show a printer's *built-in* camera.
+Wyze Print Monitor puts the live feed from a Wyze Cam V3 mounted on your
+printer **into that tab** — plus full camera controls, snapshots, recordings,
+print timelapses and picture adjustments.
 
-- **Monitor** — Studio's "does not support real-time video" box becomes the
-  live Wyze feed, with LIVE / resolution / recording / timelapse chips and a
-  toolbar: snapshot, record, timelapse, open folders, fullscreen, full
-  window, settings.
-- **Wyze Cam** — Studio's empty "Others" card becomes the camera controls:
-  connect, power on/off, restart, siren, spotlight, motion detection, push
-  notifications and device info.
+![The Wyze feed and controls docked in eufyMake Studio](docs/screenshots/studio-dock.png)
 
-Studio's own Control (temperatures, extrude/retract, Z-offset), Progress /
-Start Printing and printer list are untouched. The panels are real child
-windows of Studio, so they move, resize and minimize with it and disappear
-on the Slice tab. They only appear while the printer with the camera is
-selected in **My Printer** — set which row that is under Settings →
-*Printer with camera* (default: the first printer; "Any printer" to always
-show). Turn embedding off with *Show inside eufyMake Studio's Device tab*.
+## Install (Windows 10 / 11)
 
-While docked, the full window is hidden; open it from the toolbar's window
-button or the tray icon (closing it just hides it again — use File → Exit or
-the tray's Exit to quit). Studio's UI must be in English (panels are found
-by their "Monitor" / "Others" / "My Printer" labels).
+1. Download **`WyzePrintMonitor-<version>-setup.exe`** from the
+   [latest release](https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest).
+2. Run it. If Windows shows **"Windows protected your PC"**, click
+   **More info → Run anyway** — the installer isn't code-signed, so
+   SmartScreen doesn't know it yet.
+3. Follow the wizard (no admin rights needed). Tick *Create a desktop icon*
+   if you want one.
+4. Open **Wyze Print Monitor** from the Start menu — or just press the
+   Windows key and type **"Wyze"**.
 
-## Features
+Uninstall any time from **Settings → Apps → Installed apps**.
 
-**Monitor (left)**
-- Live RTSP view from the Wyze Cam V3, with auto-reconnect
-- Always-on-top window (toggleable) so it floats over the slicer
-- One-click **snapshot** (PNG), **clip recording** (MP4)
-- **Print timelapse**: captures a frame every N seconds, compiles to MP4 when stopped
-- Live fps / resolution readout and connection status pill
-- Launch at startup (Windows / Linux), toggleable in Settings
+## First-time setup
 
-**Control (right)**
-- Wyze cloud login (email + password + API key), with 2FA prompt when required
-- Camera picker (all cameras on the account)
-- Camera power on/off, **restart**
-- **Siren** on/off, **spotlight** on/off
-- Motion detection on/off, push notifications on/off
-- Device info: model, online status, firmware, LAN IP
+Open the app's **Settings** (gear icon) and fill in two things:
 
-## Prerequisites
+**1. The camera's video stream (RTSP)**
+In the Wyze phone app: your camera → **Settings → Advanced Settings → RTSP**
+→ turn it on, choose a username and password, then **Generate URL**. Paste
+the URL into *RTSP URL*, with your RTSP username and password in it:
 
-1. **Wyze Cam v3 with RTSP enabled** — in the Wyze app: camera → Settings →
-   Advanced Settings → RTSP → toggle on, set a username/password, then
-   *Generate URL*. Use that `rtsp://…` URL in this app's settings.
-   (The camera keeps working in the Wyze app at the same time.)
-2. **Wyze API key ID + API key** — create them in the Wyze developer portal
-   and paste them into File → Settings. They authenticate this app's camera
-   controls.
-3. **Python 3.10+** on Windows/macOS/Linux.
-
-## Install & run
-
-```bash
-pip install -e .   # installs the app and the `wyze-print-monitor` command
-
-wyze-print-monitor
+```
+rtsps://USERNAME:PASSWORD@192.168.1.50:322/stream0
 ```
 
-First run: **File → Settings…** → paste the RTSP URL, Wyze email, password,
-API key ID and API key → *Connect & list cameras* → pick your printer camera.
-Credentials are stored in your OS keyring (Windows Credential Manager /
-macOS Keychain / Linux Secret Service) — never in the settings file.
+> If the RTSP password contains `@`, `:`, `/`, `#` or `%`, write them as
+> `%40`, `%3A`, `%2F`, `%23` and `%25`. Keep the `s` in `rtsps` if Wyze gave
+> it to you — that stream is encrypted.
 
-## Notes
+**2. Wyze account access (for the camera controls)**
+Create an **API key ID** and **API key** at the
+[Wyze developer console](https://developer-api-console.wyze.com/) (sign in
+with your normal Wyze account → *API Key* → *Create*), then enter your Wyze
+email, password, key ID and key in Settings and click
+**Connect & list cameras** → **Save**. Two-factor codes are asked for when
+needed.
 
-- The V3's RTSP firmware has a few seconds of lag; that's the camera, not the app.
-- The decode buffer is kept tiny on purpose so the view stays close to live.
-- Timelapse frames are saved as JPEGs next to the final MP4; delete the
-  `*_frames` folder after compiling if you don't need the stills.
+Everything secret (RTSP password, Wyze password, API keys) is stored in
+**Windows Credential Manager**, never in a file.
 
-## Roadmap
+## Using it
 
-- AnkerMake M5C printer telemetry (nozzle/bed temps, print progress) next to the video
-- More camera properties (night-vision mode, flip/rotate, status LED)
-- Packaged Windows `.exe` via PyInstaller
+### Inside eufyMake Studio
+
+With Studio open on the **Device** tab and your camera's printer selected,
+the app replaces two panels:
+
+- **Monitor** → the live Wyze feed, with *LIVE / resolution / REC / timelapse*
+  status and a toolbar: **Snapshot**, **Record**, **Timelapse**, **Adjust**,
+  folders, fullscreen, full window and settings.
+- **Others** → **Wyze Cam** controls: power, restart, siren, spotlight, motion
+  detection, push notifications and camera info.
+
+Studio's own Control, Progress / Start Printing and printer list are left
+alone. The panels follow Studio's window and disappear on the Slice tab.
+They only show while the printer with the camera is selected — pick which
+one in Settings → **Printer with camera** (row 1 by default).
+
+### The full window
+
+Open it from the tray icon, the Start menu, or the window button in the
+docked toolbar. Closing it while Studio is open just hides it; quit from
+**File → Exit** or the tray icon.
+
+![The full window with the Image tab](docs/screenshots/main-window.png)
+
+### Picture adjustments
+
+**Adjust** (docked) or the **Image** tab (full window): brightness, contrast,
+exposure, gamma, saturation, warmth, sharpness, rotate 90°, flip, and
+digital zoom with pan — handy for zooming in on the nozzle. Adjustments
+apply to the live view *and* to snapshots, recordings and timelapses, and
+are remembered. Double-click a value to reset it, or **Reset all**.
+
+### Snapshots, recordings, timelapses
+
+Saved to `Pictures\Wyze Print Monitor` and `Videos\Wyze Print Monitor` by
+default (change in Settings). A timelapse grabs a frame every N seconds
+(Settings → *Timelapse interval*) and is compiled into an MP4 when you stop
+it.
+
+## Updates
+
+The app checks for new releases at startup and every few hours. When one is
+out, an **Update** button appears (status bar, docked toolbar, and a tray
+notification). Click it and the app downloads the new installer, verifies
+it, installs it and reopens — your settings and credentials are kept.
+Check manually with **Help → Check for updates…**; turn automatic checks off
+in Settings.
+
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| Video says *Camera stream unavailable* / keeps reconnecting | Check the RTSP URL (username, password, `rtsps`). If the Wyze app shows the camera as offline, unplug it for 10 seconds. |
+| *Login failed: 429* | Wyze is rate-limiting logins. Wait ~30 minutes, then try once. |
+| *Forbidden control character* on login | Fixed in 1.0 — re-paste the API key if you're on an older build. |
+| Panels don't show inside Studio | Studio must be on the **Device** tab with the camera's printer selected, and its UI in English. Check Settings → *Show inside eufyMake Studio's Device tab*. |
+| *Windows protected your PC* | Click **More info → Run anyway** (unsigned installer). |
+
+## For developers
+
+Python 3.10+ with PySide6, OpenCV, wyzeapy and keyring.
+
+```bash
+pip install -e ".[dev]"
+wyze-print-monitor            # run from source
+PYTHONPATH=src pytest tests/  # tests (Qt-free)
+```
+
+**Build the Windows app + installer** (needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer):
+
+```bash
+pip install -r packaging/requirements-build.txt && pip install --no-deps .
+python packaging/build_windows.py
+build\dist\WyzePrintMonitor\WyzePrintMonitor.exe --self-test report.txt
+```
+
+**Release:** bump `__version__` in `src/wyze_print_monitor/__init__.py`, merge,
+then push a tag `vX.Y.Z`. The *Release* workflow builds and self-tests the
+installer and publishes the GitHub release that installed apps update from.
+
+Layout: `app.py` (entry, tray, single instance), `ui/main_window.py` (full
+window and all camera / capture logic), `ui/studio_dock.py` +
+`studio_win32.py` (embedding into Studio), `adjust.py` (picture
+adjustments), `capture.py` / `timelapse.py` (stream, recording),
+`wyze_control.py` (Wyze cloud), `updater.py` + `ui/update_ui.py` (updates),
+`installer/` + `packaging/` (Windows build).
 
 ## License
 
