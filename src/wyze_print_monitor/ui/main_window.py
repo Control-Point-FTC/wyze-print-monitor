@@ -56,10 +56,11 @@ from ..wyze_control import (
     describe_login_error,
 )
 from .. import __version__
-from .adjust_panel import ImageAdjustPanel
+from .binder import PanelBinder
 from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
 from .settings_dialog import SettingsDialog, forget_secrets
 from .update_ui import UpdateManager
+from .views import VIEWS_QSS, CameraPanel, VideoView
 
 RIGHT_COLUMN_WIDTH = 380
 
@@ -90,11 +91,14 @@ class MainWindow(QMainWindow):
     status_message = Signal(str, int)
     # The picture adjustments changed (from any panel); views re-sync.
     adjustments_changed = Signal(object)
+    # A snapshot / clip / timelapse file was written (path).
+    capture_saved = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
-        # Extra QLabels (e.g. the Studio-docked Monitor) that also show frames.
-        self.extra_video_labels: list[QLabel] = []
+        # VideoViews showing the live picture (this window's and the
+        # Studio-docked one); each PanelBinder registers its view here.
+        self.video_views: list[VideoView] = []
         # While docked into Studio, closing this window only hides it; the app
         # keeps running until File → Exit (or the tray's Exit).
         self.hide_on_close = False
@@ -124,10 +128,10 @@ class MainWindow(QMainWindow):
 
         self.adjustments = ImageAdjustments.from_dict(self.settings.image_adjustments)
         # Slider drags fire many changes a second: save once they settle.
-        self._save_adjust_timer = QTimer(self)
-        self._save_adjust_timer.setSingleShot(True)
-        self._save_adjust_timer.setInterval(600)
-        self._save_adjust_timer.timeout.connect(lambda: save_settings(self.settings))
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(600)
+        self._save_timer.timeout.connect(lambda: save_settings(self.settings))
 
         # Re-login after temporary failures (rate limit, network), see
         # wyze_control.LOGIN_RETRY_DELAYS_S.
@@ -148,23 +152,45 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ UI build
     def _build_ui(self) -> None:
-        """Studio Device-tab layout: cards on a dark background.
+        """The full window: the live picture beside the camera panel.
 
-        Left: My Camera list. Center: Monitor (picture + capture toolbar)
-        and a Session strip. Right: Control readouts, then Camera / Image
-        tabs. Side columns have fixed widths and the center takes the rest,
-        so nothing overlaps or leaves dead gaps when the window resizes.
+        The control widgets that own the behavior (buttons, toggles, status
+        labels — built by the ``_build_*`` helpers below) live in a hidden
+        host. What you see are the shared views from ``ui.views``, bound to
+        those controls by a ``PanelBinder``, exactly like the panels docked
+        in eufyMake Studio.
         """
         self._build_menus()
 
+        self._controls = QWidget(self)
+        self._controls.hide()
+        controls = QHBoxLayout(self._controls)
+        controls.addWidget(self._build_sidebar())
+        controls.addLayout(self._build_center())
+        controls.addLayout(self._build_right_column())
+
         main = QWidget()
+        main.setStyleSheet(VIEWS_QSS)
         row = QHBoxLayout(main)
         row.setContentsMargins(10, 10, 10, 10)
         row.setSpacing(10)
-        row.addWidget(self._build_sidebar())
-        row.addLayout(self._build_center(), 1)
-        row.addLayout(self._build_right_column())
+        self.view = VideoView()
+        video_card = QFrame()
+        video_card.setObjectName("surface")
+        video_card.setAttribute(Qt.WA_StyledBackground, True)
+        QVBoxLayout(video_card).setContentsMargins(0, 0, 0, 0)
+        video_card.layout().addWidget(self.view)
+        row.addWidget(video_card, 1)
+        self.camera_panel = CameraPanel()
+        self._side_card = QFrame()
+        self._side_card.setObjectName("surface")
+        self._side_card.setAttribute(Qt.WA_StyledBackground, True)
+        self._side_card.setFixedWidth(RIGHT_COLUMN_WIDTH)
+        QVBoxLayout(self._side_card).setContentsMargins(0, 0, 0, 0)
+        self._side_card.layout().addWidget(self.camera_panel)
+        row.addWidget(self._side_card)
         self.setCentralWidget(main)
+        self.binder = PanelBinder(self, self.view, self.camera_panel)
         self.update_btn = QPushButton("Update available")
         self.update_btn.setObjectName("accentButton")
         self.update_btn.clicked.connect(self.update_manager.install)
@@ -337,7 +363,6 @@ class MainWindow(QMainWindow):
         self.side_tabs = QTabWidget()
         self.side_tabs.setDocumentMode(True)
         self.side_tabs.addTab(self._scrollable(self._camera_tab()), "Camera")
-        self.side_tabs.addTab(self._scrollable(ImageAdjustPanel(self)), "Image")
         tabs_layout.addWidget(self.side_tabs)
         column.addWidget(tabs_card, 1)
         return column
@@ -627,22 +652,16 @@ class MainWindow(QMainWindow):
                     "Timelapse: couldn't save a frame — check disk space.", 8000
                 )
 
-        # Convert once, then scale into every visible view (this window and
-        # the Studio-docked Monitor). Hidden views skip the work entirely.
-        targets = [
-            label
-            for label in (self.video_label, *self.extra_video_labels)
-            if label.isVisible() and label.width() >= 2 and label.height() >= 2
-        ]
+        # Convert once and hand the same image to every visible view (this
+        # window and the Studio-docked one); each scales it as it paints.
+        targets = [view for view in self.video_views if view.isVisible()]
         if not targets:
             return
         h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pixmap = QPixmap.fromImage(QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy())
-        for label in targets:
-            label.setPixmap(
-                pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
+        image = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+        for view in targets:
+            view.set_image(image)
 
     # ------------------------------------------------------------------ capture actions
     def _on_snapshot(self) -> None:
@@ -652,6 +671,7 @@ class MainWindow(QMainWindow):
         path = snapshot_path(self.settings.resolved_snapshot_dir())
         if cv2.imwrite(path, self._last_frame):
             self._status(f"Snapshot saved: {path}", 5000)
+            self.capture_saved.emit(path)
         else:
             QMessageBox.warning(self, "Snapshot", f"Couldn't save snapshot to:\n{path}")
 
@@ -679,6 +699,7 @@ class MainWindow(QMainWindow):
                 self._status(
                     f"Saved clip ({count} frames): {path}", 8000
                 )
+                self.capture_saved.emit(path)
             self.record_btn.setText("Record")
             self._update_session_panel()
 
@@ -724,6 +745,7 @@ class MainWindow(QMainWindow):
     def _on_timelapse_compiled(self, path: str, count: int) -> None:
         self.timelapse_btn.setEnabled(True)
         self._status(f"Timelapse saved ({count} frames): {path}", 8000)
+        self.capture_saved.emit(path)
         self._finish_compile()
 
     def _on_timelapse_failed(self, error: str) -> None:
@@ -740,6 +762,11 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.quit_app)
 
     def _toggle_fullscreen(self) -> None:
+        going_full = not self.isFullScreen()
+        # Fullscreen is just the picture: no side panel, menu or status bar.
+        self._side_card.setVisible(not going_full)
+        self.menuBar().setVisible(not going_full)
+        self.statusBar().setVisible(not going_full)
         if self.isFullScreen():
             self.showNormal()
             if self._fullscreen_from_hidden:
@@ -784,13 +811,17 @@ class MainWindow(QMainWindow):
         if self._reader is not None:
             self._reader.adjustments = adjustments  # picked up on the next frame
         self.settings.image_adjustments = adjustments.to_dict()
-        self._save_adjust_timer.start()
+        self.save_settings_soon()
         self.adjustments_changed.emit(adjustments)
 
     def _on_update_available(self, info) -> None:
         self.update_btn.setText(f"Update to {info.version}")
         self.update_btn.setToolTip(f"Wyze Print Monitor {info.version} is available (you have {__version__}).")
         self.update_btn.show()
+
+    def save_settings_soon(self) -> None:
+        """Save settings once rapid changes (slider drags) settle."""
+        self._save_timer.start()
 
     def _status(self, message: str, timeout: int = 0) -> None:
         self.statusBar().showMessage(message, timeout)

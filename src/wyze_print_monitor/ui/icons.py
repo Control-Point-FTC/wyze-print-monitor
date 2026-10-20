@@ -19,6 +19,15 @@ ICON_ADJUST = chr(0xE706)  # brightness
 ICON_ROTATE_LEFT = chr(0xE7AD)
 ICON_ROTATE_RIGHT = chr(0xE7AD)  # same glyph, mirrored when drawn
 ICON_RESET = chr(0xE72C)  # refresh arrow
+ICON_POWER = chr(0xE7E8)
+ICON_SIREN = chr(0xE789)  # megaphone
+ICON_LIGHT = chr(0xEA80)  # lightbulb
+ICON_MOTION = chr(0xE805)  # walking figure
+ICON_BELL = chr(0xEA8F)
+ICON_FIT = chr(0xE9A6)
+ICON_CLOSE = chr(0xE711)
+ICON_VIDEO = chr(0xE714)
+ICON_PHOTO = chr(0xEB9F)
 
 _family: str | None = None
 
@@ -64,6 +73,9 @@ FALLBACK_TEXT = {
     ICON_WINDOW: "Window",
     ICON_SETTINGS: "Settings",
     ICON_ADJUST: "Adjust",
+    ICON_FIT: "Fit",
+    ICON_RESET: "Refresh",
+    ICON_POWER: "Power",
 }
 
 
