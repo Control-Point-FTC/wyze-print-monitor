@@ -201,7 +201,9 @@ begin
     if ModelDownloaded then
       InstallModel();
     if ModelError <> '' then
-      SuppressibleMsgBox('The app is installed, but the AI model could not be downloaded:' + #13#10 + ModelError +
-        #13#10#13#10 + 'You can download it any time in Settings > Print watch.', mbInformation, MB_OK, IDOK);
+      // (No line may start with '#': the preprocessor would take it as a directive.)
+      SuppressibleMsgBox('The app is installed, but the AI model could not be downloaded:' + #13#10 +
+        ModelError + #13#10#13#10 + 'You can download it any time in Settings > Print watch.',
+        mbInformation, MB_OK, IDOK);
   end;
 end;

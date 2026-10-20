@@ -61,3 +61,12 @@ def test_a_loud_bang_alerts_at_once():
 def test_nothing_during_learning_even_if_loud():
     a = SoundAnomaly()
     assert [e for e in _run(a, sw.LEARN_S, 0, noise=0.5) if e] == []
+
+
+def test_a_new_print_gets_a_fresh_cooldown_but_a_reconnect_doesnt():
+    a = SoundAnomaly()
+    a.last_alert = 500.0
+    a.reset()
+    assert a.last_alert == 500.0  # reconnect: same print
+    a.reset(new_print=True)
+    assert a.last_alert < 0

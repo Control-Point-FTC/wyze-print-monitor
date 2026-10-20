@@ -179,7 +179,7 @@ class SoundWorker(QThread):
                     chunk, buf = buf[:window], buf[window:]
                     if self.reset_requested:
                         self.reset_requested = False
-                        self.anomaly.reset()
+                        self.anomaly.reset(new_print=True)
                     if self.paused:
                         continue
                     event = self.anomaly.update(band_levels(chunk, rate), time.monotonic())

@@ -57,10 +57,14 @@ class SoundAnomaly:
     recent: list = field(default_factory=list)
     last_alert: float = -1e9
 
-    def reset(self) -> None:
+    def reset(self, new_print: bool = False) -> None:
+        """Re-learn from scratch. A reconnect keeps the alert cooldown; a new
+        print doesn't inherit the last print's."""
         self.mean = self.var = None
         self.seconds = 0
         self.recent.clear()
+        if new_print:
+            self.last_alert = -1e9
 
     def update(self, levels: np.ndarray, now: float) -> SoundEvent | None:
         levels = np.asarray(levels, np.float32)

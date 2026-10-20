@@ -292,3 +292,66 @@ def test_a_manual_pause_doesnt_blame_the_ai(env):
     clock.now += pw.PAUSE_GIVE_UP_S + 1
     w._poll_studio()
     assert w.alert.title == "Studio didn't pause the print" and "AI" not in w.alert.message
+
+
+def test_another_camera_starts_from_nothing(env):
+    w, main, _studio, _clock, _n = env
+    main.settings.sound_alerts = False  # no real audio connection in tests
+    w.set_stream("rtsp://u:p@cam-one/stream0")
+    for _ in range(40):
+        w._scorer.update([])
+    w._on_checked(_result(WARNING))
+    w.set_stream("rtsp://u:p@cam-two/stream0")
+    assert w.alert is None and w._scorer.frames == 0 and w._scorer.baseline.lifetime_frames == 0
+    assert pw.camera_key("rtsp://u:p@cam-one/stream0") in main.settings.ai_baseline
+    w.set_stream("rtsp://u:p@cam-one/stream0")  # back: its own baseline returns
+    assert w._scorer.baseline.lifetime_frames == 40
+
+
+def test_camera_key_has_no_password():
+    a = pw.camera_key("rtsps://user:secret@192.168.1.5:322/stream0")
+    assert a == pw.camera_key("rtsps://user:other@192.168.1.5:322/stream0")
+    assert "secret" not in a and a != pw.camera_key("rtsps://user:secret@192.168.1.6:322/stream0")
+
+
+def test_auto_pause_tries_again_once_the_controls_are_back(env):
+    w, _main, studio, _clock, notes = env
+    studio.ours = False
+    w._on_checked(_result(FAILURE))
+    assert studio.pressed == [] and w.alert.severity == "failure"
+    studio.ours = True
+    w._poll_studio()
+    w._on_checked(_result(FAILURE))
+    assert studio.pressed == [PAUSE] and w.alert.severity in ("pausing", "paused")
+    w._on_checked(_result(FAILURE))
+    assert studio.pressed == [PAUSE]
+
+
+def test_failure_alert_isnt_repeated_every_check(env):
+    w, main, _studio, _clock, notes = env
+    main.settings.ai_auto_pause = False
+    w._on_checked(_result(FAILURE))
+    w._on_checked(_result(FAILURE))
+    assert notes == ["The print looks like it failed"]
+
+
+def test_finished_download_starts_watching(env, monkeypatch):
+    w, main, _studio, _clock, _n = env
+    restarts = []
+    monkeypatch.setattr(w, "_restart_workers", lambda: restarts.append(1))
+    w.download_finished.emit(True, "ok")
+    assert restarts == [1]
+    main.settings.ai_watch = False
+    w.download_finished.emit(True, "ok")
+    w.download_finished.emit(False, "failed")
+    assert restarts == [1]
+
+
+def test_sound_trouble_is_shown(env):
+    w, _main, _studio, _clock, _n = env
+    w._url = "rtsp://cam"
+    w.last_check = 1.0
+    w._sound_status = "unavailable: the camera stream has no audio"
+    assert "sound alerts off (the camera stream has no audio)" in w.status_text()
+    w._sound_status = "listening"
+    assert "sound" not in w.status_text()

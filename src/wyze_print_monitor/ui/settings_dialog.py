@@ -265,6 +265,12 @@ class SettingsDialog(QDialog):
             "or a loud bang. Sound alone never pauses."
         )
         watch_form.addRow(self.sound_check)
+        sound = self._watch.sound_status() if self._watch is not None else ""
+        if sound.startswith("unavailable"):
+            note = QLabel("Sound alerts aren't working right now: " + sound.split(": ", 1)[-1] + ".")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #e0a040;")
+            watch_form.addRow(note)
         column.addLayout(watch_form)
         column.addStretch(1)
 

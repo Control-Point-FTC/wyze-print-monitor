@@ -29,6 +29,7 @@ only: there's nothing to pause through).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -39,7 +40,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from .. import failure_model, studio_win32
-from ..config import save_settings
+from ..config import redact_credentials_in_url, save_settings
 from ..failure_detect import FAILURE, SENSITIVITY, WARNING, Baseline, FailureScorer, draw_detections
 from ..print_watch import SoundWorker, VisionResult, VisionWorker
 from ..sound_watch import describe as describe_sound
@@ -51,6 +52,19 @@ PAUSE_GIVE_UP_S = 15.0  # still running: tell the user to pause it
 WARNING_REPEAT_S = 15 * 60  # don't nag: one warning alert per this long
 LOOKS_FINE_SNOOZE_S = 30 * 60
 BASELINE_SAVE_EVERY = 30  # checks
+
+
+def camera_key(url: str) -> str:
+    """A stable id for a camera stream that doesn't contain its password."""
+    if not url:
+        return ""
+    return hashlib.sha256(redact_credentials_in_url(url).encode("utf-8")).hexdigest()[:16]
+
+
+def _baselines(settings) -> dict:
+    """settings.ai_baseline: {camera_key: Baseline.to_dict()} (per camera)."""
+    data = settings.ai_baseline
+    return data if isinstance(data, dict) else {}
 
 
 @dataclass
@@ -131,7 +145,8 @@ class PrintWatch(QObject):
         self._sound: SoundWorker | None = None
         self._sound_status = ""
         self._url = ""
-        self._scorer = FailureScorer(Baseline.from_dict(main.settings.ai_baseline))
+        self._camera = ""
+        self._scorer = FailureScorer()
         self._observer = StudioObserver()
         self._view = StudioView()
         self._printing: bool | None = None  # None: unknown (no Studio)
@@ -148,6 +163,8 @@ class PrintWatch(QObject):
         self._poll = QTimer(self)
         self._poll.setInterval(STUDIO_POLL_MS)
         self._poll.timeout.connect(self._poll_studio)
+        # The model can arrive after Settings closed: start watching then.
+        self.download_finished.connect(self._on_download_finished)
 
     # ------------------------------------------------------------------ setup
     @property
@@ -170,8 +187,26 @@ class PrintWatch(QObject):
         if url == self._url:
             return
         self._url = url
-        self._cancel_pause()  # another camera: that request isn't ours any more
+        self._switch_camera(camera_key(url))
         self._restart_workers()
+
+    def _switch_camera(self, key: str) -> None:
+        """Another camera (or none): nothing learned or decided about the
+        previous one applies — evidence, alerts, cooldowns, requests."""
+        if key == self._camera:
+            return
+        self._stop_workers()  # saves the old camera's baseline
+        self._camera = key
+        stored = _baselines(self.settings).get(key) if key else None
+        self._scorer = FailureScorer(Baseline.from_dict(stored or {}))
+        self._pause = self._unconfirmed_pause = None
+        self._poll.setInterval(STUDIO_POLL_MS)
+        self._paused_by_us = False
+        self._snooze_until = 0.0
+        self._last_warning = -1e9
+        self.risk = 0.0
+        self.last_check = 0.0
+        self._set_alert(None)
 
     def _restart_workers(self) -> None:
         if self._pause is not None and self._pause.auto and not self._auto_pause_allowed():
@@ -229,9 +264,13 @@ class PrintWatch(QObject):
         return reader.last_frame if reader is not None else None
 
     def _save_baseline(self) -> None:
+        if not self._camera:
+            return
         data = self._scorer.baseline.to_dict()
-        if data != self.settings.ai_baseline:
-            self.settings.ai_baseline = data
+        baselines = dict(_baselines(self.settings))
+        if baselines.get(self._camera) != data:
+            baselines[self._camera] = data
+            self.settings.ai_baseline = baselines
             try:
                 save_settings(self.settings)
             except OSError:
@@ -476,11 +515,14 @@ class PrintWatch(QObject):
     def _on_failure(self, result: VisionResult) -> None:
         if self._pause is not None or self._paused_by_us or self._print_paused:
             return  # already pausing / paused
-        if self.alert is not None and self.alert.severity in ("failure", "pause_failed"):
-            return  # already told the user
-        if self._auto_pause_allowed() and self._printing:
-            snapshot = self._save_snapshot(result, "failure")
-            if self._begin_pause(snapshot, auto=True):
+        gave_up = self.alert is not None and self.alert.severity == "pause_failed"
+        # Every failing check may pause — e.g. once the user brings Studio's
+        # Device tab back — except after Studio already ignored us (no loop
+        # of presses; the alert says to pause by hand).
+        if self._auto_pause_allowed() and self._printing and not gave_up:
+            if self._begin_pause("", auto=True):
+                snapshot = self._save_snapshot(result, "failure")
+                self._pause.snapshot = snapshot
                 self._raise(
                     "pausing",
                     "Print failure — pausing the print",
@@ -489,6 +531,8 @@ class PrintWatch(QObject):
                     snapshot=snapshot,
                 )
                 return
+        if self.alert is not None and self.alert.severity in ("failure", "pause_failed"):
+            return  # already told the user; don't repeat every 10 s
         if not self.settings.ai_auto_pause:
             why = " (auto-pause is off)"
         elif self._printing is None:
@@ -570,6 +614,10 @@ class PrintWatch(QObject):
 
     # ------------------------------------------------------------------ status
     def status_text(self) -> str:
+        text = self._status_base()
+        return text + self._sound_note() if text else ""
+
+    def _status_base(self) -> str:
         if not self.settings.ai_watch:
             return ""
         if self._pause is not None:
@@ -587,6 +635,15 @@ class PrintWatch(QObject):
         if not self.last_check:
             return "Print watch: starting…"
         return f"Print watch: {_risk_word(self.risk)}"
+
+    def _sound_note(self) -> str:
+        if self.settings.sound_alerts and self._sound_status.startswith("unavailable"):
+            return " · sound alerts off (" + self._sound_status.split(": ", 1)[-1] + ")"
+        return ""
+
+    def sound_status(self) -> str:
+        """For Settings: "listening", "unavailable: …" or "" (not running)."""
+        return self._sound_status
 
     # ------------------------------------------------------------------ model download
     def downloading(self) -> bool:
@@ -612,6 +669,10 @@ class PrintWatch(QObject):
 
         self._download = threading.Thread(target=work, name="model-download", daemon=True)
         self._download.start()
+
+    def _on_download_finished(self, ok: bool, _message: str) -> None:
+        if ok and self.settings.ai_watch:
+            self._restart_workers()
 
     def cancel_download(self) -> None:
         self._download_cancel = True

@@ -89,4 +89,7 @@ def test_installer_downloads_the_same_model():
     assert defines["ModelSHA256"] == fm.MODEL_SHA256
     assert defines["ModelFile"] == fm.MODEL_FILE
     assert defines["ModelEnableMarker"] == fm.ENABLE_MARKER
-    assert defines["ModelDir"].endswith("\wyze-print-monitor\models")
+    assert defines["ModelDir"].endswith(r"\wyze-print-monitor\models")
+    # Inno's preprocessor treats any line starting with "#" as a directive.
+    code = iss.split("[Code]", 1)[1]
+    assert not [line for line in code.splitlines() if line.lstrip().startswith("#")]
