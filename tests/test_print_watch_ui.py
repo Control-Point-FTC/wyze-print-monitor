@@ -427,14 +427,14 @@ def test_heating_counts_as_printing_without_a_pause_button(env):
 def test_a_brief_na_keeps_the_print_but_a_lasting_one_ends_it(env):
     w, _main, studio, clock, _n = env
     studio.controls = {}
-    studio.status = None  # Studio's card shows "N/A"
+    studio.status = "blank"  # Studio's card shows "N/A"
     w._poll_studio()
     clock.now += 20
     w._poll_studio()
     assert w._printing is True  # a blink (e.g. starting the next print)
     studio.controls, studio.status = dict(PRINTING), ""
     w._poll_studio()
-    studio.controls, studio.status = {}, None
+    studio.controls, studio.status = {}, "blank"
     w._poll_studio()
     clock.now += 30
     w._poll_studio()
@@ -442,3 +442,13 @@ def test_a_brief_na_keeps_the_print_but_a_lasting_one_ends_it(env):
     clock.now += pw.IDLE_AFTER_UNREADABLE_S
     w._poll_studio()
     assert w._printing is False  # the print is over
+
+
+def test_an_unknown_status_never_ends_the_print(env):
+    w, _main, studio, clock, _n = env
+    studio.controls = {"stop": STOP}
+    studio.status = None  # text we don't recognise, or no card to read
+    for _ in range(5):
+        clock.now += pw.IDLE_AFTER_UNREADABLE_S
+        w._poll_studio()
+    assert w._printing is True

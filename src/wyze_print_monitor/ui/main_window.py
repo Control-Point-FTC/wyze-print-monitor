@@ -1214,6 +1214,7 @@ class MainWindow(QMainWindow):
         retry_was_pending = self._login_retry_timer.isActive()
         self._login_retry_timer.stop()
         dialog = SettingsDialog(self.settings, self.controller, self)
+        self.update_manager.check(silent=True)  # quietly: the Update button appears if there is one
         if tab == "watch":
             dialog.show_watch_tab()
         accepted = dialog.exec() == QDialog.Accepted

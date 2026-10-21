@@ -232,12 +232,14 @@ and is compiled into an MP4 when you stop it.
 
 ## Updates
 
-The app checks for new releases at startup and every few hours. When one is
+The app checks for new releases at startup, every hour, and when you open
+Settings — no restart needed. When one is
 out, an **Update** button appears (status bar, docked toolbar, and a tray
 notification). Click it and the app downloads the new installer, verifies
 it, installs it and reopens — your settings and credentials are kept.
-Check manually with **Help → Check for updates…**; turn automatic checks off
-in Settings.
+Check any time with **Settings → General → Check for updates now** (works
+from the Studio dock too), the tray icon's **Check for updates…**, or
+**Help → Check for updates…**; turn automatic checks off in Settings.
 
 ## Troubleshooting
 

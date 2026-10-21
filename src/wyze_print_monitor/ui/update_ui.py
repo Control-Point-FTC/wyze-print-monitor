@@ -35,7 +35,7 @@ from ..updater import (
 )
 
 FIRST_CHECK_DELAY_MS = 8_000
-CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+CHECK_INTERVAL_MS = 60 * 60 * 1000  # hourly: a new release shows up the same day
 
 
 class _Worker(QObject):

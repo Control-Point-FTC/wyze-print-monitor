@@ -158,3 +158,15 @@ def test_settings_test_alert_can_be_stopped_and_popup_choice_saves(window, monke
     monkeypatch.setattr("wyze_print_monitor.ui.settings_dialog.save_secret", lambda *a: True)
     d._on_save()  # closing Settings also ends the test
     assert w.settings.ai_popup is False and w.print_watch.alert is None
+
+
+def test_settings_has_a_check_for_updates_button(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor.ui.settings_dialog import SettingsDialog
+
+    checks = []
+    monkeypatch.setattr(w.update_manager, "check", lambda silent: checks.append(silent))
+    d = SettingsDialog(w.settings, w.controller, w)
+    d.check_now_btn.click()
+    assert checks == [False]
+    d.reject()

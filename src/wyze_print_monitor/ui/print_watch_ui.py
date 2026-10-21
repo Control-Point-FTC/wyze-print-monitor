@@ -101,7 +101,8 @@ class StudioView:
     running: bool = False  # Studio is open
     ours: bool = False  # its Device tab shows the camera's printer
     controls: dict = field(default_factory=dict)  # {"pause"|"resume"|"stop": hwnd}, only when ours
-    # Studio's print status when ours: "running" | "paused" | "idle" | None (unreadable)
+    # Studio's print status when ours: "running" | "paused" | "idle" |
+    # "blank" (its "N/A" card) | None (unknown text, or no card to read)
     status: str | None = None
 
 
@@ -342,12 +343,12 @@ class PrintWatch(QObject):
         view = self._observe()
         if not view.running:
             self._set_print_state(None, False)
-        elif view.ours and view.status is not None:
+        elif view.ours and view.status in ("running", "paused", "idle"):
             # The status label, not the buttons: while heating there's no
             # Pause button yet, but the print is under way.
             self._unreadable_since = None
             self._set_print_state(view.status != "idle", view.status == "paused")
-        elif view.ours:
+        elif view.ours and view.status == "blank":
             # The camera printer's card says "N/A": a blink, or the print's
             # over. Only a lasting one ends it.
             now = time.monotonic()
@@ -355,9 +356,9 @@ class PrintWatch(QObject):
                 self._unreadable_since = now
             elif now - self._unreadable_since >= IDLE_AFTER_UNREADABLE_S:
                 self._set_print_state(False, False)
-        # else: Studio is open but not showing the camera printer (another
-        # tab or printer): nothing new is known — keep what we had.
-        if not view.ours:
+        # else: Studio is open but not showing the camera printer, or shows
+        # a status we don't know: nothing new is known — keep what we had.
+        if not (view.ours and view.status == "blank"):
             self._unreadable_since = None
         self._advance_pause()
         idle = self._printing is False or self._print_paused

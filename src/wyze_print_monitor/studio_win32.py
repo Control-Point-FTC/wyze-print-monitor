@@ -60,12 +60,18 @@ def classify_control(text: str) -> str | None:
     return None
 
 
+BLANK_CARD = "N/A"  # what Studio's Progress card shows with no print info
+
+
 def classify_print_status(text: str) -> str | None:
-    """"running" / "paused" / "idle" for Studio's status label; None when
-    it's something we don't know (then we watch, but press nothing)."""
+    """"running" / "paused" / "idle" for Studio's status label, "blank" for
+    its empty "N/A" card (a blink while it reconnects, or no print any
+    more); None when it's something we don't know (watch, press nothing)."""
     words = " ".join(text.split()).strip().lower()
     if not words:
         return None
+    if words == BLANK_CARD.lower():
+        return "blank"
     for kind, names in (("paused", STATUS_PAUSED), ("running", STATUS_RUNNING), ("idle", STATUS_IDLE)):
         if any(words == name or words.startswith(name + " ") for name in names):
             return kind
@@ -79,6 +85,8 @@ def status_from_bar(statics: list[tuple[int, str]]) -> str:
     if "|" in texts:
         after = texts[texts.index("|") + 1 :]
         return after[0] if after else ""
+    if texts == [BLANK_CARD]:
+        return BLANK_CARD  # the empty card: no file, no status
     return texts[-1] if len(texts) >= 2 else ""
 
 

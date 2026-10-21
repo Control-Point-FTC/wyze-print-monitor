@@ -93,7 +93,8 @@ def test_print_status_words():
     assert classify_print_status("Transferring 45%") == "running"
     assert classify_print_status("Paused") == "paused"
     assert classify_print_status("Completed") == "idle"
-    assert classify_print_status("N/A") is None
+    assert classify_print_status("N/A") == "blank"
+    assert classify_print_status("Recalibrating nozzle") is None  # unknown
     assert classify_print_status("") is None
 
 
@@ -102,7 +103,7 @@ def test_status_is_the_label_after_the_separator():
 
     bar = [(559, "Printing"), (240, "Main Robot Assembly - Intake Funnel.gcode"), (544, "|")]
     assert status_from_bar(bar) == "Printing"
-    assert status_from_bar([(240, "N/A")]) == ""  # idle card: no status
+    assert status_from_bar([(240, "N/A")]) == "N/A"  # the empty card
 
 
 # The real eufyMake Studio bar: Stop at x=1282; Pause and Resume share x=1314.

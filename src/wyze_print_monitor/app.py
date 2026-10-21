@@ -114,6 +114,7 @@ def _make_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon | None:
     menu = QMenu()
     menu.addAction("Open Wyze Print Monitor", window.show_window)
     menu.addAction("Settings…", window._open_settings)
+    menu.addAction("Check for updates…", lambda: window.update_manager.check(silent=False))
     menu.addSeparator()
     menu.addAction("Exit", window.quit_app)
     tray.setContextMenu(menu)

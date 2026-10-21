@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import autostart, failure_model
+from .. import __version__, autostart, failure_model
 from ..config import (
     SECRET_API_KEY,
     SECRET_KEY_ID,
@@ -189,6 +189,14 @@ class SettingsDialog(QDialog):
         self.updates_check = QCheckBox("Check for updates automatically")
         self.updates_check.setChecked(settings.check_updates)
         form.addRow(self.updates_check)
+        updates_row = QHBoxLayout()
+        updates_row.addWidget(QLabel(f"Version {__version__}"))
+        self.check_now_btn = QPushButton("Check for updates now")
+        self.check_now_btn.setEnabled(getattr(parent, "update_manager", None) is not None)
+        self.check_now_btn.clicked.connect(lambda: parent.update_manager.check(silent=False))
+        updates_row.addWidget(self.check_now_btn)
+        updates_row.addStretch(1)
+        form.addRow(updates_row)
         form.addRow("Printer with camera", self.dock_row_spin)
 
         tabs = self._tabs = QTabWidget()
