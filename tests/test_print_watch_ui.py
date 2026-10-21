@@ -39,9 +39,18 @@ class FakeStudio:
         self.running, self.ours, self.controls = True, True, dict(PRINTING)
         self.obeys = True
         self.pressed = []
+        self.status = ""  # "" = follow the buttons; else a status kind or None (unreadable)
+
+    def current_status(self):
+        if self.status != "":
+            return self.status
+        if "resume" in self.controls:
+            return "paused"
+        return "running" if "pause" in self.controls else "idle"
 
     def view(self, _row):
-        return pw.StudioView(self.running, self.running and self.ours, dict(self.controls) if self.ours else {})
+        ours = self.running and self.ours
+        return pw.StudioView(self.running, ours, dict(self.controls) if ours else {}, self.current_status() if ours else None)
 
     def press(self, hwnd):
         self.pressed.append(hwnd)
@@ -66,7 +75,8 @@ def env(tmp_path, monkeypatch):
     studio = FakeStudio()
     clock = Clock()
     monkeypatch.setattr(pw, "save_settings", lambda s: None)
-    monkeypatch.setattr(pw, "_beep", lambda urgent: None)
+    sounds = []
+    monkeypatch.setattr(pw.Alarm, "play", lambda self, sound, urgent: sounds.append((sound, urgent)))
     monkeypatch.setattr(pw.StudioObserver, "observe", lambda self, row: studio.view(row))
     monkeypatch.setattr(pw.studio_win32, "press", studio.press)
     monkeypatch.setattr(pw.time, "monotonic", clock)
@@ -355,3 +365,99 @@ def test_sound_trouble_is_shown(env):
     assert "sound alerts off (the camera stream has no audio)" in w.status_text()
     w._sound_status = "listening"
     assert "sound" not in w.status_text()
+
+
+def test_only_failures_setting_skips_warnings(env):
+    w, main, _studio, _clock, notes = env
+    main.settings.ai_alert_level = "failures"
+    w._on_checked(_result(WARNING))
+    assert w.alert is None and notes == []
+    w._on_checked(_result(FAILURE))
+    assert w.alert is not None
+
+
+def test_notifications_can_be_turned_off(env):
+    w, main, _studio, _clock, notes = env
+    main.settings.ai_notifications = False
+    w._on_checked(_result(WARNING))
+    assert w.alert.severity == "warning" and notes == []
+
+
+def test_sound_choice_and_urgency(env, monkeypatch):
+    w, main, studio, _clock, _n = env
+    played = []
+    monkeypatch.setattr(w.alarm, "play", lambda sound, urgent: played.append((sound, urgent)))
+    w._on_checked(_result(WARNING))
+    main.settings.ai_sound = "beep"
+    w._on_checked(_result(FAILURE))  # pausing: urgent
+    w._poll_studio()  # confirmed paused: stays urgent
+    assert played == [("alarm", False), ("beep", True), ("beep", True)]
+
+
+def test_test_alert_plays_and_dismisses(env, monkeypatch):
+    w, _main, studio, _clock, notes = env
+    played = []
+    monkeypatch.setattr(w.alarm, "play", lambda sound, urgent: played.append(urgent))
+    w.test_alert()
+    assert w.alert.severity == "test" and played == [True] and notes == ["Test alert"]
+    assert w.alert.snapshot == "" and studio.pressed == []
+    w.dismiss()
+    assert w.alert is None
+
+
+def test_settings_feed_the_scorer_and_worker(env):
+    w, main, _studio, _clock, _n = env
+    main.settings.ai_pause_after_s = 60
+    main.settings.ai_check_interval_s = 20
+    w.apply_settings()
+    assert w._scorer.pause_after_s == 60
+    assert w._scorer.interval_s == 20
+    main.settings.ai_check_interval_s = 7  # not an offered value
+    assert w.check_interval() == 10
+
+
+def test_heating_counts_as_printing_without_a_pause_button(env):
+    w, _main, studio, _clock, _n = env
+    studio.controls = {"stop": STOP}
+    studio.status = "running"  # "Heating": only Stop is shown
+    w._poll_studio()
+    assert w._printing is True and not w._print_paused
+
+
+def test_a_brief_na_keeps_the_print_but_a_lasting_one_ends_it(env):
+    w, _main, studio, clock, _n = env
+    studio.controls = {}
+    studio.status = "blank"  # Studio's card shows "N/A"
+    w._poll_studio()
+    clock.now += 20
+    w._poll_studio()
+    assert w._printing is True  # a blink (e.g. starting the next print)
+    studio.controls, studio.status = dict(PRINTING), ""
+    w._poll_studio()
+    studio.controls, studio.status = {}, "blank"
+    w._poll_studio()
+    clock.now += 30
+    w._poll_studio()
+    assert w._printing is True  # the timer restarted after the status came back
+    clock.now += pw.IDLE_AFTER_UNREADABLE_S
+    w._poll_studio()
+    assert w._printing is False  # the print is over
+
+
+def test_an_unknown_status_never_ends_the_print(env):
+    w, _main, studio, clock, _n = env
+    studio.controls = {"stop": STOP}
+    studio.status = None  # text we don't recognise, or no card to read
+    for _ in range(5):
+        clock.now += pw.IDLE_AFTER_UNREADABLE_S
+        w._poll_studio()
+    assert w._printing is True
+
+
+def test_a_test_alert_never_replaces_a_real_one(env, monkeypatch):
+    w, _main, studio, _clock, _n = env
+    w._on_checked(_result(FAILURE))
+    w._poll_studio()
+    assert w.alert.severity == "paused"
+    assert w.test_alert() is False
+    assert w.alert.severity == "paused"

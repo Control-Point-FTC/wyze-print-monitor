@@ -113,6 +113,14 @@ class Settings:
     ai_auto_pause: bool = True
     ai_sensitivity: str = "normal"  # low | normal | high
     sound_alerts: bool = True
+    # What alerts: "all" (possible problems too) | "failures" (likely failures only)
+    ai_alert_level: str = "all"
+    # Alert sound: "alarm" (loops for failures until you respond) | "beep" | "off"
+    ai_sound: str = "alarm"
+    ai_notifications: bool = True  # Windows notifications
+    ai_popup: bool = True  # pop-up alert card on top of other windows
+    ai_pause_after_s: int = 30  # a failure must hold this long before pausing
+    ai_check_interval_s: int = 10  # seconds between AI checks
     # This camera's long-term "normal" for the model (failure_detect.Baseline).
     ai_baseline: dict = field(default_factory=dict)
 

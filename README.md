@@ -9,14 +9,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Control-Point-FTC/wyze-print-monitor?label=download&color=62d361"></a>
-  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Control-Point-FTC/wyze-print-monitor/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/ZOGWORK/wyze-print-monitor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ZOGWORK/wyze-print-monitor?label=download&color=62d361"></a>
+  <a href="https://github.com/ZOGWORK/wyze-print-monitor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ZOGWORK/wyze-print-monitor/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-lightgrey"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest"><b>⬇ Download the latest installer</b></a>
+  <a href="https://github.com/ZOGWORK/wyze-print-monitor/releases/latest"><b>⬇ Download the latest installer</b></a>
 </p>
 
 ---
@@ -64,7 +64,7 @@ alerts you to failed prints (and pauses them when it's sure).
 ## Install (Windows 10 / 11)
 
 1. Download **`WyzePrintMonitor-<version>-setup.exe`** from the
-   [latest release](https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest).
+   [latest release](https://github.com/ZOGWORK/wyze-print-monitor/releases/latest).
 2. Run it. If Windows shows **"Windows protected your PC"**, click
    **More info → Run anyway** — the installer isn't code-signed, so
    SmartScreen doesn't know it yet.
@@ -206,8 +206,19 @@ failure-detection model.
   sounds from the camera's microphone and alerts on grinding, clicking or a
   loud bang. Sound only ever alerts.
 
-It checks one frame every 10 seconds, only while Studio shows a print
-running — about 1% of a modern CPU. *Looks fine* on an alert keeps it quiet
+**How you're told:** a banner on the video (with *Pause*, *Stop print…*,
+*Looks fine* and *Silence*), a **pop-up alert card** in the corner of the
+screen that stays on top of Studio and other apps until you respond, a
+Windows notification, and a sound — by
+default an **alarm that repeats until you respond** for likely failures,
+and a short chime for "take a look". Settings → Print watch lets you choose
+what alerts you (possible problems, or only likely failures), the sound
+(alarm / chime / silent), notifications, how long a failure must last
+before it pauses (30 s / 1 min / 2 min) and how often it checks (10 / 20 /
+30 s); *Test alert* shows exactly what you'll get.
+
+It only runs while Studio shows a print running — about 1% of a modern CPU
+at the default 10-second checks. *Looks fine* on an alert keeps it quiet
 for 30 minutes. Single frames are never trusted: like Obico, it compares a
 smoothed score with what's normal for your camera, and stays quiet for the
 first few minutes of each print.
@@ -221,12 +232,14 @@ and is compiled into an MP4 when you stop it.
 
 ## Updates
 
-The app checks for new releases at startup and every few hours. When one is
+The app checks for new releases at startup, every hour, and when you open
+Settings — no restart needed. When one is
 out, an **Update** button appears (status bar, docked toolbar, and a tray
 notification). Click it and the app downloads the new installer, verifies
 it, installs it and reopens — your settings and credentials are kept.
-Check manually with **Help → Check for updates…**; turn automatic checks off
-in Settings.
+Check any time with **Settings → General → Check for updates now** (works
+from the Studio dock too), the tray icon's **Check for updates…**, or
+**Help → Check for updates…**; turn automatic checks off in Settings.
 
 ## Troubleshooting
 

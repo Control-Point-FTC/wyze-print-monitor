@@ -35,7 +35,7 @@ from ..updater import (
 )
 
 FIRST_CHECK_DELAY_MS = 8_000
-CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+CHECK_INTERVAL_MS = 60 * 60 * 1000  # hourly: a new release shows up the same day
 
 
 class _Worker(QObject):
@@ -90,6 +90,7 @@ class UpdateManager(QObject):
         self.main = main
         self.latest: ReleaseInfo | None = None
         self._check_worker: _Worker | None = None
+        self._check_silent = True  # the running check's: a manual click can upgrade it
         self._download_worker: _Worker | None = None
         self._progress: QProgressDialog | None = None
         self._timer = QTimer(self)
@@ -112,10 +113,13 @@ class UpdateManager(QObject):
         if silent and not self.main.settings.check_updates:
             return
         if self._check_worker is not None and self._check_worker.is_running():
+            if not silent:
+                self._check_silent = False  # the user asked: answer when it finishes
             return
+        self._check_silent = silent
         worker = _Worker(lambda _w: fetch_latest())
-        worker.succeeded.connect(lambda info: self._on_checked(info, silent))
-        worker.failed.connect(lambda error: self._on_check_failed(error, silent))
+        worker.succeeded.connect(lambda info: self._on_checked(info, self._check_silent))
+        worker.failed.connect(lambda error: self._on_check_failed(error, self._check_silent))
         self._check_worker = worker
         worker.start()
 

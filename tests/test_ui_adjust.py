@@ -123,3 +123,82 @@ def test_settings_sound_warning_follows_the_live_state(window):
     assert d.sound_note.isHidden()
     d.reject()
     w.print_watch.status_changed.emit()  # disconnected: no error after close
+
+
+def test_popup_alert_follows_the_setting_and_the_alert(window, monkeypatch):
+    w, app = window
+    watch = w.print_watch
+    monkeypatch.setattr(watch.alarm, "play", lambda sound, urgent: None)
+    w.settings.ai_popup = True
+    watch.test_alert()
+    app.processEvents()
+    assert w.alert_popup.isVisible() and "Test alert" in w.alert_popup.bar.title.text()
+    w.alert_popup.bar.fine_btn.click()  # "Dismiss" from the pop-up
+    app.processEvents()
+    assert watch.alert is None and not w.alert_popup.isVisible()
+    w.settings.ai_popup = False
+    watch.test_alert()
+    app.processEvents()
+    assert watch.alert is not None and not w.alert_popup.isVisible()
+    watch.dismiss()
+
+
+def test_settings_test_alert_can_be_stopped_and_popup_choice_saves(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor.ui.settings_dialog import SettingsDialog
+
+    monkeypatch.setattr(w.print_watch.alarm, "play", lambda sound, urgent: None)
+    d = SettingsDialog(w.settings, w.controller, w)
+    d.test_alert_btn.click()
+    assert w.print_watch.alert.severity == "test" and d.test_alert_btn.text() == "Stop test alert"
+    d.test_alert_btn.click()
+    assert w.print_watch.alert is None and d.test_alert_btn.text() == "Test alert"
+    d.test_alert_btn.click()
+    d.popup_check.setChecked(False)
+    monkeypatch.setattr("wyze_print_monitor.ui.settings_dialog.save_secret", lambda *a: True)
+    d._on_save()  # closing Settings also ends the test
+    assert w.settings.ai_popup is False and w.print_watch.alert is None
+
+
+def test_settings_has_a_check_for_updates_button(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor.ui.settings_dialog import SettingsDialog
+
+    checks = []
+    monkeypatch.setattr(w.update_manager, "check", lambda silent: checks.append(silent))
+    d = SettingsDialog(w.settings, w.controller, w)
+    d.check_now_btn.click()
+    assert checks == [False]
+    d.reject()
+
+
+def test_a_manual_update_check_answers_even_if_one_is_running(window, monkeypatch):
+    w, app = window
+    um = w.update_manager
+
+    class Running:
+        def is_running(self):
+            return True
+
+    um._check_worker, um._check_silent = Running(), True  # the automatic check
+    um.check(silent=False)  # the user clicks while it runs
+    assert um._check_silent is False
+    shown = []
+    monkeypatch.setattr("wyze_print_monitor.ui.update_ui.QMessageBox.information", lambda *a, **k: shown.append(a))
+    um._on_checked(None, um._check_silent)  # it finishes: up to date
+    assert shown
+
+
+def test_popup_actions_fit_the_card(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor.ui.print_watch_ui import Alert
+
+    popup = w.alert_popup
+    monkeypatch.setattr(w.print_watch.alarm, "playing", True, raising=False)
+    popup.show_alert(Alert("failure", "The print looks like it failed", "Check the printer now.",
+                           snapshot="x", can_pause=True, can_stop=True))
+    app.processEvents()
+    for button in (popup.bar.pause_btn, popup.bar.stop_btn, popup.bar.fine_btn, popup.bar.silence_btn):
+        assert button.isVisible()
+        assert button.geometry().right() <= popup.bar.width()
+    popup.hide()

@@ -34,15 +34,21 @@ ROLLING_WIN_SHORT = 310
 ROLLING_WIN_LONG = 7200
 THRESHOLD_LOW = 0.38
 THRESHOLD_HIGH = 0.78
-INIT_SAFE_FRAME_NUM = 30  # first ~5 min of a session: never alert
+INIT_SAFE_FRAME_NUM = 30  # first ~5 min of a session (at 10 s checks): never alert
+INIT_SAFE_S = INIT_SAFE_FRAME_NUM * CHECK_INTERVAL_S
 ROLLING_MEAN_SHORT_MULTIPLE = 3.8
 ESCALATING_FACTOR = 1.75
 
-PAUSE_CONFIRM_CHECKS = 3  # failure must hold this many checks in a row
+PAUSE_AFTER_DEFAULT_S = 30.0  # failure must hold this long (watched time) to pause
+PAUSE_CONFIRM_CHECKS = 4  # = 30 s at 10 s checks: failing at 0, 10, 20 and 30 s
 
 OK, WARNING, FAILURE = "ok", "warning", "failure"
 
 SENSITIVITY = {"low": 0.8, "normal": 1.0, "high": 1.2}
+CHECK_INTERVALS_S = (10, 20, 30)
+PAUSE_AFTER_S = (30, 60, 120)
+
+
 
 
 # ------------------------------------------------------------------ model I/O
@@ -131,11 +137,21 @@ class FailureScorer:
     frames: int = 0  # checks this session
     failure_streak: int = 0
     last_p: float = 0.0
+    # Pause once failing checks have spanned this much watched time (the
+    # user's "pause once sure for"), however often it checks.
+    pause_after_s: float = PAUSE_AFTER_DEFAULT_S
+    streak_started_s: float = 0.0
+    # Seconds between checks (set with the interval setting) and how long
+    # this session has been watched: the quiet start of a print is ~5
+    # minutes of watching however often it checks, even if that changes.
+    interval_s: float = CHECK_INTERVAL_S
+    watched_s: float = 0.0
 
     def reset_session(self) -> None:
         """A new print (or watching resumed): forget short-term history."""
         self.ewm_mean = self.rolling_mean_short = self.last_p = 0.0
         self.frames = self.failure_streak = 0
+        self.watched_s = 0.0
 
     def update(self, detections: list[Detection]) -> str:
         """Fold one check in; returns OK, WARNING or FAILURE (= pause now)."""
@@ -144,21 +160,25 @@ class FailureScorer:
         b = self.baseline
         self.last_p = p
         self.frames += 1
+        self.watched_s += self.interval_s
         b.lifetime_frames += 1
         self.ewm_mean = p * alpha + self.ewm_mean * (1 - alpha)
         self.rolling_mean_short = _rolling(p, self.rolling_mean_short, self.frames, ROLLING_WIN_SHORT)
         b.rolling_mean_long = _rolling(p, b.rolling_mean_long, b.lifetime_frames, ROLLING_WIN_LONG)
 
         if self._failing(ESCALATING_FACTOR):
+            if self.failure_streak == 0:
+                self.streak_started_s = self.watched_s
             self.failure_streak += 1
-            if self.failure_streak >= PAUSE_CONFIRM_CHECKS:
+            held = self.watched_s - self.streak_started_s
+            if self.failure_streak >= 2 and held >= self.pause_after_s - 1e-6:
                 return FAILURE
             return WARNING  # very likely, but not sure enough to pause yet
         self.failure_streak = 0
         return WARNING if self._failing(1.0) else OK
 
     def _failing(self, escalating: float) -> bool:
-        if self.frames < INIT_SAFE_FRAME_NUM:
+        if self.watched_s < INIT_SAFE_S - 1e-6:
             return False
         adjusted = (self.ewm_mean - self.baseline.rolling_mean_long) * self.sensitivity / escalating
         if adjusted < THRESHOLD_LOW:

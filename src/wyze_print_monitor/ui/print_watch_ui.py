@@ -41,11 +41,24 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 
 from .. import failure_model, studio_win32
 from ..config import redact_credentials_in_url, save_settings
-from ..failure_detect import FAILURE, SENSITIVITY, WARNING, Baseline, FailureScorer, draw_detections
+from ..failure_detect import (
+    CHECK_INTERVALS_S,
+    FAILURE,
+    PAUSE_AFTER_S,
+    SENSITIVITY,
+    WARNING,
+    Baseline,
+    FailureScorer,
+    draw_detections,
+)
 from ..print_watch import SoundWorker, VisionResult, VisionWorker
 from ..sound_watch import describe as describe_sound
+from .alarm import Alarm
 
 STUDIO_POLL_MS = 3000
+# Studio's card shows "N/A" both briefly (reconnecting, starting a print)
+# and once a print is over; only a lasting "N/A" means the print ended.
+IDLE_AFTER_UNREADABLE_S = 60.0
 PAUSE_POLL_MS = 1000  # while waiting for Studio to confirm a pause
 PAUSE_RETRY_S = 6.0  # no Resume button yet: press Pause once more
 PAUSE_GIVE_UP_S = 15.0  # still running: tell the user to pause it
@@ -87,6 +100,9 @@ class StudioView:
     running: bool = False  # Studio is open
     ours: bool = False  # its Device tab shows the camera's printer
     controls: dict = field(default_factory=dict)  # {"pause"|"resume"|"stop": hwnd}, only when ours
+    # Studio's print status when ours: "running" | "paused" | "idle" |
+    # "blank" (its "N/A" card) | None (unknown text, or no card to read)
+    status: str | None = None
 
 
 class StudioObserver:
@@ -114,7 +130,8 @@ class StudioObserver:
         self._selected_ok = studio_win32.camera_printer_selected(selected, configured_row, self._selected_ok)
         if not studio_win32.may_control_print(self._selected_ok, configured_row, len(layout.printer_rows)):
             return StudioView(running=True)
-        return StudioView(True, True, studio_win32.find_print_controls(layout.host))
+        status, controls = studio_win32.read_print_state(layout.host)
+        return StudioView(True, True, controls, status)
 
 
 @dataclass
@@ -129,6 +146,7 @@ class _PendingPause:
 
 class PrintWatch(QObject):
     alert_changed = Signal(object)  # Alert or None
+    popup_requested = Signal(object)  # Alert: show the pop-up card (setting on)
     notify = Signal(str, str)  # title, message (tray notification)
     status_changed = Signal()  # status_text() / risk changed
     download_progress = Signal(int, int)
@@ -151,6 +169,7 @@ class PrintWatch(QObject):
         self._view = StudioView()
         self._printing: bool | None = None  # None: unknown (no Studio)
         self._print_paused = False
+        self._unreadable_since: float | None = None
         self._pause: _PendingPause | None = None
         self._unconfirmed_pause: _PendingPause | None = None  # gave up waiting on this one
         self._paused_by_us = False
@@ -160,6 +179,7 @@ class PrintWatch(QObject):
         self._error = ""
         self._download: threading.Thread | None = None
         self._download_cancel = False
+        self.alarm = Alarm(self)
         self._poll = QTimer(self)
         self._poll.setInterval(STUDIO_POLL_MS)
         self._poll.timeout.connect(self._poll_studio)
@@ -213,13 +233,18 @@ class PrintWatch(QObject):
             self._cancel_pause()  # watching or auto-pause was just turned off
         self._stop_workers()
         self._scorer.sensitivity = SENSITIVITY.get(self.settings.ai_sensitivity, 1.0)
+        interval = self.check_interval()
+        self._scorer.pause_after_s = self.pause_after()
+        self._scorer.interval_s = interval
         if not self._url:
             self._poll.stop()
             self.status_changed.emit()
             return
         self._error = ""
         if self.enabled():
-            self._vision = VisionWorker(failure_model.model_path(), self._latest_frame, self._scorer, parent=self)
+            self._vision = VisionWorker(
+                failure_model.model_path(), self._latest_frame, self._scorer, interval_s=interval, parent=self
+            )
             self._vision.checked.connect(self._on_checked)
             self._vision.failed.connect(self._on_failed)
             self._vision.start(VisionWorker.LowPriority)
@@ -252,6 +277,7 @@ class PrintWatch(QObject):
         self._save_baseline()
 
     def shutdown(self) -> None:
+        self.alarm.stop()
         self._poll.stop()
         self._download_cancel = True
         self._stop_workers()
@@ -276,6 +302,32 @@ class PrintWatch(QObject):
             except OSError:
                 pass
 
+    def check_interval(self) -> int:
+        value = self.settings.ai_check_interval_s
+        return value if value in CHECK_INTERVALS_S else CHECK_INTERVALS_S[0]
+
+    def pause_after(self) -> int:
+        value = self.settings.ai_pause_after_s
+        return value if value in PAUSE_AFTER_S else PAUSE_AFTER_S[0]
+
+    def silence(self) -> None:
+        self.alarm.stop()
+
+    def test_alert(self) -> bool:
+        """Show / play exactly what a failure alert does, without a failure.
+        Refused (False) while a real alert is showing: a test must never
+        replace it."""
+        if self.alert is not None and self.alert.severity != "test":
+            return False
+        self._raise(
+            "test",
+            "Test alert",
+            "This is how Print watch tells you a print looks like it failed. Click Dismiss to stop it.",
+            None,
+            urgent=True,
+        )
+        return True
+
     def _reset_session(self) -> None:
         """Fresh short-term history for the model and the sound check. Both
         belong to their worker threads while those run, so ask them."""
@@ -295,11 +347,23 @@ class PrintWatch(QObject):
         view = self._observe()
         if not view.running:
             self._set_print_state(None, False)
-        elif view.ours:
-            c = view.controls
-            self._set_print_state("pause" in c or "resume" in c, "resume" in c)
-        # else: Studio is open but not showing the camera printer's controls
-        # (another tab or printer): nothing new is known — keep what we had.
+        elif view.ours and view.status in ("running", "paused", "idle"):
+            # The status label, not the buttons: while heating there's no
+            # Pause button yet, but the print is under way.
+            self._unreadable_since = None
+            self._set_print_state(view.status != "idle", view.status == "paused")
+        elif view.ours and view.status == "blank":
+            # The camera printer's card says "N/A": a blink, or the print's
+            # over. Only a lasting one ends it.
+            now = time.monotonic()
+            if self._unreadable_since is None:
+                self._unreadable_since = now
+            elif now - self._unreadable_since >= IDLE_AFTER_UNREADABLE_S:
+                self._set_print_state(False, False)
+        # else: Studio is open but not showing the camera printer, or shows
+        # a status we don't know: nothing new is known — keep what we had.
+        if not (view.ours and view.status == "blank"):
+            self._unreadable_since = None
         self._advance_pause()
         idle = self._printing is False or self._print_paused
         for worker in (self._vision, self._sound):
@@ -432,7 +496,7 @@ class PrintWatch(QObject):
                 "Check the printer, then Resume or Stop.",
                 None,
                 snapshot=request.snapshot,
-                urgent=False,
+                urgent=True,
             )
         else:
             self._raise(
@@ -446,6 +510,7 @@ class PrintWatch(QObject):
 
     def pause_print(self) -> bool:
         """The user's Pause button: same verified, confirmed path."""
+        self.alarm.stop()
         if self._pause is not None:
             return True
         snapshot = self.alert.snapshot if self.alert else ""
@@ -455,6 +520,7 @@ class PrintWatch(QObject):
         return True
 
     def resume_print(self) -> bool:
+        self.alarm.stop()
         hwnd = self._verified_control("resume")
         ok = bool(hwnd) and studio_win32.press(hwnd)
         if ok:
@@ -463,6 +529,7 @@ class PrintWatch(QObject):
 
     def stop_print(self, parent: QWidget | None = None) -> bool:
         """Stop — only after the user confirms (Studio may ask again)."""
+        self.alarm.stop()
         if not self._verified_control("stop"):
             return False
         answer = QMessageBox.warning(
@@ -502,7 +569,7 @@ class PrintWatch(QObject):
             return  # "Looks fine": quiet, failures included
         if result.level == FAILURE:
             self._on_failure(result)
-        elif result.level == WARNING:
+        elif result.level == WARNING and self.settings.ai_alert_level != "failures":
             if now - self._last_warning >= WARNING_REPEAT_S and (self.alert is None or self.alert.severity == "sound"):
                 self._last_warning = now
                 self._raise(
@@ -572,7 +639,7 @@ class PrintWatch(QObject):
         urgent: bool | None = None,
         quiet: bool = False,
     ) -> None:
-        if not snapshot and severity != "pausing":
+        if not snapshot and severity not in ("pausing", "test"):
             snapshot = self._save_snapshot(result, severity)
         c = self._view.controls if self._view.ours else {}
         alert = Alert(
@@ -588,10 +655,18 @@ class PrintWatch(QObject):
         self._set_alert(alert)
         if quiet:
             return
-        self.notify.emit(title, message)
-        _beep(severity in ("failure", "pausing", "pause_failed") if urgent is None else urgent)
+        if self.settings.ai_popup:
+            self.popup_requested.emit(alert)
+        if self.settings.ai_notifications:
+            self.notify.emit(title, message)
+        if urgent is None:
+            urgent = severity in ("failure", "pausing", "pause_failed")
+        self.alarm.play(self.settings.ai_sound, urgent)
 
     def _set_alert(self, alert: Alert | None) -> None:
+        # A new or cleared alert ends the old one's alarm (_raise starts the
+        # new one's sound right after).
+        self.alarm.stop()
         self.alert = alert
         self.alert_changed.emit(alert)
 
@@ -689,12 +764,3 @@ def _risk_word(risk: float) -> str:
     if risk >= 1 / 3:
         return "something may be wrong"
     return "all good"
-
-
-def _beep(urgent: bool) -> None:
-    try:
-        import winsound
-
-        winsound.MessageBeep(winsound.MB_ICONHAND if urgent else winsound.MB_ICONEXCLAMATION)
-    except (ImportError, RuntimeError):
-        pass

@@ -72,6 +72,30 @@ def _toggle_state(control: QAbstractButton) -> str:
     return "On" if control.isChecked() else "Off"
 
 
+def view_alert_snapshot(main) -> None:
+    alert = main.print_watch.alert
+    if alert is not None and alert.snapshot and os.path.exists(alert.snapshot):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(alert.snapshot))
+
+
+def wire_alert_bar(bar, main) -> None:
+    """Connect an AlertBar's buttons (video banner or pop-up) to Print watch."""
+    watch = main.print_watch
+    bar.fine_btn.clicked.connect(
+        lambda: watch.looks_fine()
+        if watch.alert and watch.alert.severity in ("warning", "failure", "sound")
+        else watch.dismiss()
+    )
+    bar.pause_btn.clicked.connect(
+        lambda: watch.pause_print()
+        or main.status_message.emit("Couldn't pause: Studio isn't showing this printer's Pause button.")
+    )
+    bar.resume_btn.clicked.connect(watch.resume_print)
+    bar.silence_btn.clicked.connect(watch.silence)
+    bar.stop_btn.clicked.connect(lambda: watch.stop_print(bar.window()))
+    bar.view_btn.clicked.connect(lambda: view_alert_snapshot(main))
+
+
 class PanelBinder(QObject):
     def __init__(self, main, video: VideoView, camera: CameraPanel, parent: QObject | None = None) -> None:
         super().__init__(parent or main)
@@ -143,17 +167,7 @@ class PanelBinder(QObject):
         folders.addAction("Open video folder", lambda: m._open_folder(m.settings.resolved_video_dir()))
         v.folder_btn.setMenu(folders)
         _show_fill(v, bool(m.settings.video_fill))
-        watch = m.print_watch
-        v.alert.fine_btn.clicked.connect(
-            lambda: watch.looks_fine()
-            if watch.alert and watch.alert.severity in ("warning", "failure", "sound")
-            else watch.dismiss()
-        )
-        v.alert.pause_btn.clicked.connect(lambda: watch.pause_print() or m.status_message.emit(
-            "Couldn't pause: Studio isn't showing this printer's Pause button."))
-        v.alert.resume_btn.clicked.connect(watch.resume_print)
-        v.alert.stop_btn.clicked.connect(lambda: watch.stop_print(v.window()))
-        v.alert.view_btn.clicked.connect(self._view_alert_snapshot)
+        wire_alert_bar(v.alert, m)
 
         c.settings_btn.clicked.connect(m._open_settings)
         c.more_picture_btn.clicked.connect(self._open_adjust)
@@ -174,11 +188,6 @@ class PanelBinder(QObject):
         c.watch_tile.clicked.connect(lambda: m.set_print_watch_enabled(not m.settings.ai_watch))
         for name, (slider, _value) in c.quick_sliders.items():
             slider.valueChanged.connect(lambda value, n=name: self._on_quick_slider(n, value))
-
-    def _view_alert_snapshot(self) -> None:
-        alert = self.main.print_watch.alert
-        if alert is not None and alert.snapshot and os.path.exists(alert.snapshot):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(alert.snapshot))
 
     def _toggle_adjust(self) -> None:
         if self.camera.adjusting():
@@ -296,6 +305,9 @@ class PanelBinder(QObject):
             set_chip(v.timelapse_chip, "Compiling timelapse…", "#3a4f7a")
         else:
             set_chip(v.timelapse_chip, "")
+        silence = m.print_watch.alarm.playing and not v.alert.isHidden()
+        if v.alert.silence_btn.isVisible() != silence:
+            v.alert.silence_btn.setVisible(silence)
         watch_text = m.print_watch.status_text()
         if watch_text:
             word = watch_text.split(": ", 1)[-1]

@@ -61,6 +61,7 @@ from .. import __version__, failure_model
 from .binder import PanelBinder
 from .icons import ICON_CAMERA, ICON_FOLDER, ICON_FULLSCREEN, ICON_RECORD, ICON_TIMER, tool_button
 from .settings_dialog import SettingsDialog, forget_secrets
+from .alert_popup import AlertPopup
 from .print_watch_ui import PrintWatch
 from .update_ui import UpdateManager
 from .views import VIEWS_QSS, CameraPanel, VideoView
@@ -151,6 +152,7 @@ class MainWindow(QMainWindow):
 
         self.update_manager = UpdateManager(self)
         self.print_watch = PrintWatch(self)
+        self.alert_popup = AlertPopup(self)
         self.update_manager.available.connect(self._on_update_available)
 
         self._build_ui()
@@ -1212,6 +1214,7 @@ class MainWindow(QMainWindow):
         retry_was_pending = self._login_retry_timer.isActive()
         self._login_retry_timer.stop()
         dialog = SettingsDialog(self.settings, self.controller, self)
+        self.update_manager.check(silent=True)  # quietly: the Update button appears if there is one
         if tab == "watch":
             dialog.show_watch_tab()
         accepted = dialog.exec() == QDialog.Accepted
@@ -1315,5 +1318,6 @@ class MainWindow(QMainWindow):
         self._retired_readers.clear()
         self.update_manager.shutdown()
         self.print_watch.shutdown()
+        self.alert_popup.close()
         self.runner.stop()
         save_settings(self.settings)
