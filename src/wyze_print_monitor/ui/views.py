@@ -299,9 +299,22 @@ class AlertBar(QFrame):
         self.stop_btn = QPushButton("Stop print…")
         self.stop_btn.setObjectName("danger")
         self.stop_btn.setToolTip("Asks before stopping")
-        for button in (self.silence_btn, self.view_btn, self.fine_btn, self.pause_btn, self.resume_btn, self.stop_btn):
+        buttons = (self.silence_btn, self.view_btn, self.fine_btn, self.pause_btn, self.resume_btn, self.stop_btn)
+        for button in buttons:
             button.setCursor(Qt.PointingHandCursor)
-            row.addWidget(button, 0, Qt.AlignVCenter)
+        if compact:
+            # A narrow card: print actions on one row, the rest on another.
+            second = QHBoxLayout()
+            second.setSpacing(6)
+            for button in (self.pause_btn, self.resume_btn, self.stop_btn):
+                row.addWidget(button)
+            for button in (self.silence_btn, self.view_btn, self.fine_btn):
+                second.addWidget(button)
+            second.addStretch(1)
+            outer.addLayout(second)
+        else:
+            for button in buttons:
+                row.addWidget(button, 0, Qt.AlignVCenter)
         self.hide()
 
     def show_alert(self, alert) -> None:

@@ -170,3 +170,35 @@ def test_settings_has_a_check_for_updates_button(window, monkeypatch):
     d.check_now_btn.click()
     assert checks == [False]
     d.reject()
+
+
+def test_a_manual_update_check_answers_even_if_one_is_running(window, monkeypatch):
+    w, app = window
+    um = w.update_manager
+
+    class Running:
+        def is_running(self):
+            return True
+
+    um._check_worker, um._check_silent = Running(), True  # the automatic check
+    um.check(silent=False)  # the user clicks while it runs
+    assert um._check_silent is False
+    shown = []
+    monkeypatch.setattr("wyze_print_monitor.ui.update_ui.QMessageBox.information", lambda *a, **k: shown.append(a))
+    um._on_checked(None, um._check_silent)  # it finishes: up to date
+    assert shown
+
+
+def test_popup_actions_fit_the_card(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor.ui.print_watch_ui import Alert
+
+    popup = w.alert_popup
+    monkeypatch.setattr(w.print_watch.alarm, "playing", True, raising=False)
+    popup.show_alert(Alert("failure", "The print looks like it failed", "Check the printer now.",
+                           snapshot="x", can_pause=True, can_stop=True))
+    app.processEvents()
+    for button in (popup.bar.pause_btn, popup.bar.stop_btn, popup.bar.fine_btn, popup.bar.silence_btn):
+        assert button.isVisible()
+        assert button.geometry().right() <= popup.bar.width()
+    popup.hide()

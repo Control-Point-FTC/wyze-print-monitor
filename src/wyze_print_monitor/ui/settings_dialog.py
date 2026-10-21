@@ -380,11 +380,18 @@ class SettingsDialog(QDialog):
         s.ai_sound = self.sound_combo.currentData()
         s.ai_notifications = self.notify_check.isChecked()
         s.ai_popup = self.popup_check.isChecked()
-        self.test_alert_btn.setText("Stop test alert")
         try:
-            self._watch.test_alert()
+            started = self._watch.test_alert()
         finally:
             s.ai_sound, s.ai_notifications, s.ai_popup = saved
+        if started:
+            self.test_alert_btn.setText("Stop test alert")
+        else:
+            QMessageBox.information(
+                self,
+                "Test alert",
+                "A real Print watch alert is showing right now — deal with that first.",
+            )
 
     def _on_download(self) -> None:
         if self._watch is None:

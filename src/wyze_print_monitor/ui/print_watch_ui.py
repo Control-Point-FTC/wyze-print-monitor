@@ -49,7 +49,6 @@ from ..failure_detect import (
     WARNING,
     Baseline,
     FailureScorer,
-    confirm_checks,
     draw_detections,
 )
 from ..print_watch import SoundWorker, VisionResult, VisionWorker
@@ -235,7 +234,7 @@ class PrintWatch(QObject):
         self._stop_workers()
         self._scorer.sensitivity = SENSITIVITY.get(self.settings.ai_sensitivity, 1.0)
         interval = self.check_interval()
-        self._scorer.pause_confirm_checks = confirm_checks(self.pause_after(), interval)
+        self._scorer.pause_after_s = self.pause_after()
         self._scorer.interval_s = interval
         if not self._url:
             self._poll.stop()
@@ -314,8 +313,12 @@ class PrintWatch(QObject):
     def silence(self) -> None:
         self.alarm.stop()
 
-    def test_alert(self) -> None:
-        """Show / play exactly what a failure alert does, without a failure."""
+    def test_alert(self) -> bool:
+        """Show / play exactly what a failure alert does, without a failure.
+        Refused (False) while a real alert is showing: a test must never
+        replace it."""
+        if self.alert is not None and self.alert.severity != "test":
+            return False
         self._raise(
             "test",
             "Test alert",
@@ -323,6 +326,7 @@ class PrintWatch(QObject):
             None,
             urgent=True,
         )
+        return True
 
     def _reset_session(self) -> None:
         """Fresh short-term history for the model and the sound check. Both

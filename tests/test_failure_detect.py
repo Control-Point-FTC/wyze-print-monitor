@@ -124,18 +124,25 @@ def test_draw_detections_returns_a_marked_copy():
     assert out[70:90, 130:170].sum() == 0  # low-confidence box not drawn
 
 
-def test_pause_delay_setting():
-    # N failing checks span (N - 1) intervals: enough to cover the delay.
-    assert fd.confirm_checks(30, 10) == 4
-    assert fd.confirm_checks(60, 10) == 7
-    assert fd.confirm_checks(60, 30) == 3  # 0, 30, 60 s
-    assert fd.confirm_checks(120, 30) == 5
-
-    scorer = FailureScorer(pause_confirm_checks=6)
+def test_pause_delay_is_held_time():
+    assert FailureScorer().pause_after_s == 30
+    scorer = FailureScorer(pause_after_s=60)
     _feed(scorer, 0.0, 60)
     levels = _feed(scorer, 2.5, 30)
-    first_failure = levels.index(FAILURE)
-    assert levels[first_failure - 5 : first_failure] == [WARNING] * 5
+    f = levels.index(FAILURE)
+    assert levels[f - 6 : f] == [WARNING] * 6  # failing at 0..50 s, paused at 60 s
+    assert scorer.watched_s - scorer.streak_started_s >= 60
+
+
+def test_switching_interval_mid_streak_keeps_the_delay_in_time():
+    scorer = FailureScorer(pause_after_s=120)
+    _feed(scorer, 0.0, 60)
+    while scorer.failure_streak < 4:  # failing at 0, 10, 20, 30 s
+        assert scorer.update([Detection(2.5, (0, 0, 1, 1))]) != FAILURE
+    scorer.interval_s = 30  # slower checks from now on
+    levels = _feed(scorer, 2.5, 5)
+    assert levels[:2] == [WARNING, WARNING]  # 60 s, 90 s
+    assert levels[2] == FAILURE  # 120 s: not the 5-checks-at-30 s = 150 s, nor earlier
 
 
 def test_quiet_start_is_time_even_if_the_interval_changes():

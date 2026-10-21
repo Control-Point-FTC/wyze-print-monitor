@@ -20,8 +20,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import math
-
 import cv2
 import numpy as np
 
@@ -41,7 +39,8 @@ INIT_SAFE_S = INIT_SAFE_FRAME_NUM * CHECK_INTERVAL_S
 ROLLING_MEAN_SHORT_MULTIPLE = 3.8
 ESCALATING_FACTOR = 1.75
 
-PAUSE_CONFIRM_CHECKS = 3  # failure must hold this many checks in a row
+PAUSE_AFTER_DEFAULT_S = 30.0  # failure must hold this long (watched time) to pause
+PAUSE_CONFIRM_CHECKS = 4  # = 30 s at 10 s checks: failing at 0, 10, 20 and 30 s
 
 OK, WARNING, FAILURE = "ok", "warning", "failure"
 
@@ -49,16 +48,6 @@ SENSITIVITY = {"low": 0.8, "normal": 1.0, "high": 1.2}
 CHECK_INTERVALS_S = (10, 20, 30)
 PAUSE_AFTER_S = (30, 60, 120)
 
-
-def confirm_checks(pause_after_s: float, interval_s: float) -> int:
-    """How many failing checks in a row make "held for pause_after_s".
-
-    N checks span (N - 1) intervals from the first failing one to the last,
-    so it takes one more check than pause_after_s / interval_s.
-    """
-    if interval_s <= 0:
-        return PAUSE_CONFIRM_CHECKS
-    return max(2, math.ceil(pause_after_s / interval_s) + 1)
 
 
 
@@ -148,7 +137,10 @@ class FailureScorer:
     frames: int = 0  # checks this session
     failure_streak: int = 0
     last_p: float = 0.0
-    pause_confirm_checks: int = PAUSE_CONFIRM_CHECKS
+    # Pause once failing checks have spanned this much watched time (the
+    # user's "pause once sure for"), however often it checks.
+    pause_after_s: float = PAUSE_AFTER_DEFAULT_S
+    streak_started_s: float = 0.0
     # Seconds between checks (set with the interval setting) and how long
     # this session has been watched: the quiet start of a print is ~5
     # minutes of watching however often it checks, even if that changes.
@@ -175,8 +167,11 @@ class FailureScorer:
         b.rolling_mean_long = _rolling(p, b.rolling_mean_long, b.lifetime_frames, ROLLING_WIN_LONG)
 
         if self._failing(ESCALATING_FACTOR):
+            if self.failure_streak == 0:
+                self.streak_started_s = self.watched_s
             self.failure_streak += 1
-            if self.failure_streak >= self.pause_confirm_checks:
+            held = self.watched_s - self.streak_started_s
+            if self.failure_streak >= 2 and held >= self.pause_after_s - 1e-6:
                 return FAILURE
             return WARNING  # very likely, but not sure enough to pause yet
         self.failure_streak = 0

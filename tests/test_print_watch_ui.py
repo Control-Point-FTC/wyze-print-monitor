@@ -410,7 +410,7 @@ def test_settings_feed_the_scorer_and_worker(env):
     main.settings.ai_pause_after_s = 60
     main.settings.ai_check_interval_s = 20
     w.apply_settings()
-    assert w._scorer.pause_confirm_checks == 4  # 0, 20, 40, 60 s
+    assert w._scorer.pause_after_s == 60
     assert w._scorer.interval_s == 20
     main.settings.ai_check_interval_s = 7  # not an offered value
     assert w.check_interval() == 10
@@ -452,3 +452,12 @@ def test_an_unknown_status_never_ends_the_print(env):
         clock.now += pw.IDLE_AFTER_UNREADABLE_S
         w._poll_studio()
     assert w._printing is True
+
+
+def test_a_test_alert_never_replaces_a_real_one(env, monkeypatch):
+    w, _main, studio, _clock, _n = env
+    w._on_checked(_result(FAILURE))
+    w._poll_studio()
+    assert w.alert.severity == "paused"
+    assert w.test_alert() is False
+    assert w.alert.severity == "paused"
