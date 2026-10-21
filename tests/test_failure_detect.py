@@ -161,3 +161,31 @@ def test_quiet_start_is_time_even_if_the_interval_changes():
     slow.interval_s = 30
     assert set(_feed(slow, 3.0, 6)) == {OK}
     assert slow.watched_s == pytest.approx(280)
+
+
+def test_looks_fine_teaches_the_camera_what_is_normal():
+    def first_warning(scorer):
+        levels = _feed(scorer, 1.2, 60)
+        return levels.index(WARNING) if WARNING in levels else 99
+
+    untaught = FailureScorer()
+    _feed(untaught, 0.0, 60)
+    plain = first_warning(untaught)
+
+    taught = FailureScorer()
+    _feed(taught, 0.0, 60)
+    _feed(taught, 1.2, 20)  # it raised a (false) alarm on this...
+    before = taught.baseline.rolling_mean_long
+    taught.teach_normal()  # ..."Looks fine"
+    assert taught.baseline.rolling_mean_long > before
+    taught.reset_session()
+    _feed(taught, 0.0, 30)
+    assert first_warning(taught) > plain  # the same thing alerts later, or not at all
+
+
+def test_teaching_is_capped():
+    scorer = FailureScorer()
+    scorer.ewm_mean = 50.0
+    for _ in range(10):
+        scorer.teach_normal()
+    assert scorer.baseline.rolling_mean_long <= fd.TEACH_MAX

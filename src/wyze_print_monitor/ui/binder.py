@@ -22,6 +22,7 @@ from .adjust_panel import ImageAdjustPanel
 from ..quality import LABELS as QUALITY_LABELS
 from ..quality import QUALITIES
 from ..wyze_control import friendly_model
+from .styles import GREEN, TEXT_DIM
 from .views import CHIP_STYLES, CameraPanel, ToggleTile, VideoView, set_chip
 
 SYNC_MS = 200
@@ -311,8 +312,17 @@ class PanelBinder(QObject):
         watch_text = m.print_watch.status_text()
         if watch_text:
             word = watch_text.split(": ", 1)[-1]
-            risky = m.print_watch.risk >= 1 / 3 and word not in ("model not downloaded",)
-            set_chip(v.watch_chip, f"AI · {word}", "#7a3a2f" if risky else "#2f4a5a")
+            risk = m.print_watch.risk if m.print_watch.last_check else 0.0
+            dot = "#e8574a" if risk >= 2 / 3 else "#e0a040" if risk >= 1 / 3 else GREEN
+            if not m.print_watch.last_check or word.startswith(("idle", "model", "waiting", "stopped")):
+                dot = TEXT_DIM  # not watching right now
+            # Same see-through pill as the zoom chip; only the dot has color.
+            set_chip(
+                v.watch_chip,
+                f'<span style="color:{dot}">\u25cf</span>&nbsp; AI · {word}',
+                "rgba(20, 21, 23, 190)",
+                "#d7d9dc",
+            )
             v.watch_chip.setToolTip(watch_text)
         else:
             set_chip(v.watch_chip, "")

@@ -24,6 +24,8 @@ SUSTAIN_OF = 6  # ...of the last this many seconds
 BANG_DB = 24.0  # one second this much louder than normal
 COOLDOWN_S = 300.0
 LEARN_ALPHA = 1 / 120  # running stats follow ~2 minutes of normal sound
+TEACH_DB = 6.0  # each "Looks fine" on a sound alert: this much louder needed
+TEACH_MAX_DB = 18.0
 
 
 def band_levels(samples: np.ndarray, rate: int) -> np.ndarray:
@@ -56,6 +58,7 @@ class SoundAnomaly:
     seconds: int = 0
     recent: list = field(default_factory=list)
     last_alert: float = -1e9
+    extra_db: float = 0.0  # tolerance added by "Looks fine" (this print)
 
     def reset(self, new_print: bool = False) -> None:
         """Re-learn from scratch. A reconnect keeps the alert cooldown; a new
@@ -65,6 +68,13 @@ class SoundAnomaly:
         self.recent.clear()
         if new_print:
             self.last_alert = -1e9
+            self.extra_db = 0.0
+
+    def teach(self) -> None:
+        """"Looks fine" on a sound alert: this print is allowed to be louder
+        than that before alerting again (keeps everything else learned)."""
+        self.extra_db = min(self.extra_db + TEACH_DB, TEACH_MAX_DB)
+        self.recent.clear()
 
     def update(self, levels: np.ndarray, now: float) -> SoundEvent | None:
         levels = np.asarray(levels, np.float32)
@@ -75,7 +85,7 @@ class SoundAnomaly:
         self.seconds += 1
         spread = np.sqrt(np.maximum(self.var, MIN_SPREAD_DB**2))
         louder = levels - self.mean
-        unusual = bool(np.any((louder / spread > UNUSUAL_Z) & (louder > UNUSUAL_DB)))
+        unusual = bool(np.any((louder / spread > UNUSUAL_Z) & (louder > UNUSUAL_DB + self.extra_db)))
         learning = self.seconds <= LEARN_S
         if not unusual or learning:
             # Learn only from normal sound, so a long noise can't become "normal".
@@ -90,7 +100,7 @@ class SoundAnomaly:
         if now - self.last_alert < COOLDOWN_S:
             return None
         worst = float(louder.max())
-        if worst > BANG_DB:
+        if worst > BANG_DB + self.extra_db:
             kind = "bang"
         elif sum(self.recent) >= SUSTAIN_WINDOWS:
             kind = "unusual"

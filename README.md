@@ -218,10 +218,11 @@ before it pauses (30 s / 1 min / 2 min) and how often it checks (10 / 20 /
 30 s); *Test alert* shows exactly what you'll get.
 
 It only runs while Studio shows a print running — about 1% of a modern CPU
-at the default 10-second checks. *Looks fine* on an alert keeps it quiet
-for 30 minutes. Single frames are never trusted: like Obico, it compares a
-smoothed score with what's normal for your camera, and stays quiet for the
-first few minutes of each print.
+at the default 10-second checks. *Looks fine* on an alert keeps it quiet for 30 minutes **and teaches it**:
+on an AI alert, what the camera saw counts more as normal for your setup
+(a cable or purge line that fooled it alerts less next time; this fades by
+itself over many hours if the scene changes); on a sound alert, the rest of
+that print needs a louder noise to alert again.
 
 ### Snapshots, recordings, timelapses
 
