@@ -72,6 +72,7 @@ class VisionWorker(QThread):
         self._stop = False
         self.paused = False  # GUI sets this while nothing is printing
         self.reset_requested = False  # GUI: start a fresh session (applied here)
+        self.teach_requested = False  # GUI: "Looks fine" — learn this as normal
 
     def request_stop(self) -> None:
         """Ask the thread to finish (returns at once; see QThread.finished)."""
@@ -102,6 +103,9 @@ class VisionWorker(QThread):
             except Exception as exc:
                 self.failed.emit(f"Failure detection stopped: {exc}")
                 return
+            if self.teach_requested:  # before a reset: it needs what was seen
+                self.teach_requested = False
+                self.scorer.teach_normal()
             if self.reset_requested:
                 self.reset_requested = False
                 self.scorer.reset_session()
@@ -130,6 +134,7 @@ class SoundWorker(QThread):
         self._wake = threading.Event()
         self.paused = False
         self.reset_requested = False  # GUI: forget the learned sound (applied here)
+        self.teach_requested = False  # GUI: "Looks fine" on a sound alert
         self.anomaly = SoundAnomaly()
 
     def request_stop(self) -> None:
@@ -180,6 +185,9 @@ class SoundWorker(QThread):
                     if self.reset_requested:
                         self.reset_requested = False
                         self.anomaly.reset(new_print=True)
+                    if self.teach_requested:
+                        self.teach_requested = False
+                        self.anomaly.teach()
                     if self.paused:
                         continue
                     event = self.anomaly.update(band_levels(chunk, rate), time.monotonic())

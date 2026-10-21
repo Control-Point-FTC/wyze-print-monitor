@@ -461,3 +461,46 @@ def test_a_test_alert_never_replaces_a_real_one(env, monkeypatch):
     assert w.alert.severity == "paused"
     assert w.test_alert() is False
     assert w.alert.severity == "paused"
+
+
+def test_looks_fine_on_an_ai_alert_teaches_the_model_side(env):
+    w, _main, _studio, _clock, _n = env
+
+    class FakeVision:
+        teach_requested = reset_requested = paused = False
+
+    w._vision = FakeVision()
+    w._on_checked(_result(WARNING))
+    w.looks_fine()
+    assert w._vision.teach_requested and w._vision.reset_requested
+    assert w._save_baseline_soon
+    w._vision = None
+
+
+def test_looks_fine_on_a_sound_alert_teaches_the_sound_side_only(env):
+    w, _main, _studio, _clock, _n = env
+
+    class FakeWorker:
+        teach_requested = reset_requested = paused = False
+
+    w._vision, w._sound = FakeWorker(), FakeWorker()
+    w._on_sound(type("E", (), {"kind": "unusual", "louder_db": 12.0})())
+    w.looks_fine()
+    assert w._sound.teach_requested and not w._sound.reset_requested
+    assert not w._vision.teach_requested and not w._vision.reset_requested
+    w._vision = w._sound = None
+
+
+def test_resuming_keeps_the_sound_checks_learning(env):
+    w, _main, studio, _clock, _n = env
+
+    class FakeWorker:
+        teach_requested = reset_requested = paused = False
+
+    w._vision, w._sound = FakeWorker(), FakeWorker()
+    studio.controls = dict(PAUSED)
+    w._poll_studio()
+    studio.controls = dict(PRINTING)  # resumed
+    w._poll_studio()
+    assert w._vision.reset_requested and not w._sound.reset_requested
+    w._vision = w._sound = None

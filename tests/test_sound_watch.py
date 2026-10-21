@@ -70,3 +70,24 @@ def test_a_new_print_gets_a_fresh_cooldown_but_a_reconnect_doesnt():
     assert a.last_alert == 500.0  # reconnect: same print
     a.reset(new_print=True)
     assert a.last_alert < 0
+
+
+def test_looks_fine_makes_this_print_more_tolerant():
+    a = SoundAnomaly()
+    _run(a, sw.LEARN_S + 30, 0)
+    a.teach()
+    assert a.extra_db == sw.TEACH_DB
+    t = sw.LEARN_S + 30
+    once = [e for e in _run(a, 20, t, tone_hz=2000, tone=0.04) if e]
+    assert len(once) == 1  # ~15 dB grinding still beats 8 + 6 dB
+    a.teach()  # "Looks fine" again
+    a.last_alert = -1e9
+    twice = [e for e in _run(a, 20, t + 400, tone_hz=2000, tone=0.04) if e]
+    assert twice == []  # 8 + 12 dB: now it's tolerated
+    for _ in range(5):
+        a.teach()
+    assert a.extra_db == sw.TEACH_MAX_DB
+    a.reset()
+    assert a.extra_db == sw.TEACH_MAX_DB  # a reconnect keeps it
+    a.reset(new_print=True)
+    assert a.extra_db == 0.0  # the next print starts fresh

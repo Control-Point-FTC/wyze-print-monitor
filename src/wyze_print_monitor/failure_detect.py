@@ -39,6 +39,8 @@ INIT_SAFE_S = INIT_SAFE_FRAME_NUM * CHECK_INTERVAL_S
 ROLLING_MEAN_SHORT_MULTIPLE = 3.8
 ESCALATING_FACTOR = 1.75
 
+TEACH_STEP = 0.5  # "Looks fine": move the camera's normal halfway to what it saw
+TEACH_MAX = 1.0  # ...but never treat more than this much "failure" as normal
 PAUSE_AFTER_DEFAULT_S = 30.0  # failure must hold this long (watched time) to pause
 PAUSE_CONFIRM_CHECKS = 4  # = 30 s at 10 s checks: failing at 0, 10, 20 and 30 s
 
@@ -146,6 +148,19 @@ class FailureScorer:
     # minutes of watching however often it checks, even if that changes.
     interval_s: float = CHECK_INTERVAL_S
     watched_s: float = 0.0
+
+    def teach_normal(self) -> None:
+        """The user said an alert was a false alarm ("Looks fine"): what the
+        model sees right now is normal for this camera. Raise the long-term
+        normal toward it, partly and capped, so the same harmless thing
+        alerts less; it drifts back down by itself if the scene changes."""
+        b = self.baseline
+        if self.ewm_mean > b.rolling_mean_long and b.rolling_mean_long < TEACH_MAX:
+            # Only ever raises it (a normal already above the cap stays).
+            b.rolling_mean_long += TEACH_STEP * (self.ewm_mean - b.rolling_mean_long)
+            b.rolling_mean_long = min(b.rolling_mean_long, TEACH_MAX)
+        # Count it as real history, so the next checks don't simply undo it.
+        b.lifetime_frames = max(b.lifetime_frames, ROLLING_WIN_SHORT)
 
     def reset_session(self) -> None:
         """A new print (or watching resumed): forget short-term history."""

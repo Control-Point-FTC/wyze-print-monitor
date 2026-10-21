@@ -176,6 +176,7 @@ class PrintWatch(QObject):
         self._last_warning = -1e9
         self._snooze_until = 0.0
         self._checks = 0
+        self._save_baseline_soon = False
         self._error = ""
         self._download: threading.Thread | None = None
         self._download_cancel = False
@@ -392,10 +393,11 @@ class PrintWatch(QObject):
             self._paused_by_us = False
             self._set_alert(None)
         if was_paused and not paused and printing:
-            # Resumed (here or in Studio): watch afresh, don't re-pause on
-            # the old evidence.
+            # Resumed (here or in Studio): the AI watches afresh, so it
+            # doesn't re-pause on the old evidence. Same print, so the sound
+            # check keeps what it learned (and any "Looks fine" tolerance).
             self._paused_by_us = False
-            self._reset_session()
+            self._vision_reset()
             if self.alert is not None and self.alert.severity in ("paused", "failure", "pause_failed"):
                 self._set_alert(None)
         self._printing = printing
@@ -548,10 +550,28 @@ class PrintWatch(QObject):
         return ok
 
     def looks_fine(self) -> None:
-        """The user checked: it's fine. Quiet for a while, and re-learn."""
+        """The user checked: it's fine. Quiet for a while, and learn from it:
+        an AI alert raises this camera's normal; a sound alert makes this
+        print's sound check more tolerant."""
+        severity = self.alert.severity if self.alert is not None else ""
         self._snooze_until = time.monotonic() + LOOKS_FINE_SNOOZE_S
-        self._reset_session()
+        if severity == "sound":
+            if self._sound is not None:
+                self._sound.teach_requested = True
+        else:
+            if self._vision is not None:
+                self._vision.teach_requested = True  # applied before the reset
+            else:
+                self._scorer.teach_normal()
+            self._vision_reset()
+            self._save_baseline_soon = True
         self._set_alert(None)
+
+    def _vision_reset(self) -> None:
+        if self._vision is not None:
+            self._vision.reset_requested = True
+        else:
+            self._scorer.reset_session()
 
     def dismiss(self) -> None:
         self._set_alert(None)
@@ -561,8 +581,9 @@ class PrintWatch(QObject):
         self.risk = result.risk
         self.last_check = time.time()
         self._checks += 1
-        if self._checks % BASELINE_SAVE_EVERY == 0:
-            self._save_baseline()
+        if self._checks % BASELINE_SAVE_EVERY == 0 or self._save_baseline_soon:
+            self._save_baseline_soon = False
+            self._save_baseline()  # incl. right after "Looks fine" taught it
         self.status_changed.emit()
         now = time.monotonic()
         if now < self._snooze_until:
