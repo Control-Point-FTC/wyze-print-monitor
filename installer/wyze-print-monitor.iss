@@ -13,7 +13,7 @@
 #define AppName "Wyze Print Monitor"
 #define AppExe "WyzePrintMonitor.exe"
 #define AppPublisher "Control Point FTC"
-#define AppURL "https://github.com/Control-Point-FTC/wyze-print-monitor"
+#define AppURL "https://github.com/ZOGWORK/wyze-print-monitor"
 ; Must match APP_USER_MODEL_ID / INSTALLER_MUTEX in src/wyze_print_monitor/app.py.
 #define AppUserModelID "ControlPointFTC.WyzePrintMonitor"
 #define AppMutexName "WyzePrintMonitorRunning"

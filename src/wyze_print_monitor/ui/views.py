@@ -251,15 +251,23 @@ class _Pill(QFrame):
 
 
 class AlertBar(QFrame):
-    """A print-watch alert across the top of the video, with what to do."""
+    """A print-watch alert with what to do: across the top of the video, or
+    ``compact`` (text above, buttons below) in the pop-up alert."""
 
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(self, parent: QWidget | None = None, compact: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("alert")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(12, 10, 10, 10)
-        row.setSpacing(10)
+        if compact:
+            outer = QVBoxLayout(self)
+            outer.setContentsMargins(12, 10, 12, 12)
+            outer.setSpacing(8)
+            row = QHBoxLayout()
+            row.setSpacing(6)
+        else:
+            row = QHBoxLayout(self)
+            row.setContentsMargins(12, 10, 10, 10)
+            row.setSpacing(10)
         texts = QVBoxLayout()
         texts.setSpacing(2)
         self.title = QLabel()
@@ -269,7 +277,12 @@ class AlertBar(QFrame):
         self.text.setWordWrap(True)
         texts.addWidget(self.title)
         texts.addWidget(self.text)
-        row.addLayout(texts, 1)
+        if compact:
+            outer.addLayout(texts)
+            outer.addLayout(row)
+            row.addStretch(1)
+        else:
+            row.addLayout(texts, 1)
         self.silence_btn = QPushButton("\U0001F507 Silence")
         self.silence_btn.setObjectName("plain")
         self.silence_btn.setToolTip("Stop the alarm sound (the alert stays)")

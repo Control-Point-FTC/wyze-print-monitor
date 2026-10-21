@@ -123,3 +123,21 @@ def test_settings_sound_warning_follows_the_live_state(window):
     assert d.sound_note.isHidden()
     d.reject()
     w.print_watch.status_changed.emit()  # disconnected: no error after close
+
+
+def test_popup_alert_follows_the_setting_and_the_alert(window, monkeypatch):
+    w, app = window
+    watch = w.print_watch
+    monkeypatch.setattr(watch.alarm, "play", lambda sound, urgent: None)
+    w.settings.ai_popup = True
+    watch.test_alert()
+    app.processEvents()
+    assert w.alert_popup.isVisible() and "Test alert" in w.alert_popup.bar.title.text()
+    w.alert_popup.bar.fine_btn.click()  # "Dismiss" from the pop-up
+    app.processEvents()
+    assert watch.alert is None and not w.alert_popup.isVisible()
+    w.settings.ai_popup = False
+    watch.test_alert()
+    app.processEvents()
+    assert watch.alert is not None and not w.alert_popup.isVisible()
+    watch.dismiss()

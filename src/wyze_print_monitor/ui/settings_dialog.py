@@ -289,6 +289,13 @@ class SettingsDialog(QDialog):
         self.notify_check = QCheckBox("Show Windows notifications")
         self.notify_check.setChecked(settings.ai_notifications)
         watch_form.addRow(self.notify_check)
+        self.popup_check = QCheckBox("Pop up the alert on top of other windows (until I respond)")
+        self.popup_check.setChecked(settings.ai_popup)
+        self.popup_check.setToolTip(
+            "A small alert card in the corner of the screen, above Studio and other apps, "
+            "with the snapshot and Pause / Stop buttons. It doesn't take your keyboard focus."
+        )
+        watch_form.addRow(self.popup_check)
         self.test_alert_btn = QPushButton("Test alert")
         self.test_alert_btn.setToolTip("Shows the alert and plays the sound with the settings above.")
         self.test_alert_btn.clicked.connect(self._on_test_alert)
@@ -357,12 +364,15 @@ class SettingsDialog(QDialog):
         if self._watch is None:
             return
         s = self._settings
-        saved = (s.ai_sound, s.ai_notifications)
-        s.ai_sound, s.ai_notifications = self.sound_combo.currentData(), self.notify_check.isChecked()
+        saved = (s.ai_sound, s.ai_notifications, s.ai_popup)
+        s.ai_sound = self.sound_combo.currentData()
+        s.ai_notifications = self.notify_check.isChecked()
+        s.ai_popup = self.popup_check.isChecked()
+        s.ai_popup = self.popup_check.isChecked()
         try:
             self._watch.test_alert()
         finally:
-            s.ai_sound, s.ai_notifications = saved
+            s.ai_sound, s.ai_notifications, s.ai_popup = saved
 
     def _on_download(self) -> None:
         if self._watch is None:

@@ -9,14 +9,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Control-Point-FTC/wyze-print-monitor?label=download&color=62d361"></a>
-  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Control-Point-FTC/wyze-print-monitor/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/ZOGWORK/wyze-print-monitor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ZOGWORK/wyze-print-monitor?label=download&color=62d361"></a>
+  <a href="https://github.com/ZOGWORK/wyze-print-monitor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ZOGWORK/wyze-print-monitor/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-lightgrey"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest"><b>⬇ Download the latest installer</b></a>
+  <a href="https://github.com/ZOGWORK/wyze-print-monitor/releases/latest"><b>⬇ Download the latest installer</b></a>
 </p>
 
 ---
@@ -64,7 +64,7 @@ alerts you to failed prints (and pauses them when it's sure).
 ## Install (Windows 10 / 11)
 
 1. Download **`WyzePrintMonitor-<version>-setup.exe`** from the
-   [latest release](https://github.com/Control-Point-FTC/wyze-print-monitor/releases/latest).
+   [latest release](https://github.com/ZOGWORK/wyze-print-monitor/releases/latest).
 2. Run it. If Windows shows **"Windows protected your PC"**, click
    **More info → Run anyway** — the installer isn't code-signed, so
    SmartScreen doesn't know it yet.
@@ -207,7 +207,9 @@ failure-detection model.
   loud bang. Sound only ever alerts.
 
 **How you're told:** a banner on the video (with *Pause*, *Stop print…*,
-*Looks fine* and *Silence*), a Windows notification, and a sound — by
+*Looks fine* and *Silence*), a **pop-up alert card** in the corner of the
+screen that stays on top of Studio and other apps until you respond, a
+Windows notification, and a sound — by
 default an **alarm that repeats until you respond** for likely failures,
 and a short chime for "take a look". Settings → Print watch lets you choose
 what alerts you (possible problems, or only likely failures), the sound

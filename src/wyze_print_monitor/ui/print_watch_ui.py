@@ -140,6 +140,7 @@ class _PendingPause:
 
 class PrintWatch(QObject):
     alert_changed = Signal(object)  # Alert or None
+    popup_requested = Signal(object)  # Alert: show the pop-up card (setting on)
     notify = Signal(str, str)  # title, message (tray notification)
     status_changed = Signal()  # status_text() / risk changed
     download_progress = Signal(int, int)
@@ -629,6 +630,8 @@ class PrintWatch(QObject):
         self._set_alert(alert)
         if quiet:
             return
+        if self.settings.ai_popup:
+            self.popup_requested.emit(alert)
         if self.settings.ai_notifications:
             self.notify.emit(title, message)
         if urgent is None:

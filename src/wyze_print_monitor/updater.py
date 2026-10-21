@@ -24,7 +24,7 @@ from typing import Callable
 
 from . import __version__
 
-GITHUB_REPO = "Control-Point-FTC/wyze-print-monitor"
+GITHUB_REPO = "ZOGWORK/wyze-print-monitor"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 INSTALLER_PATTERN = re.compile(r"^WyzePrintMonitor-.*-setup\.exe$", re.IGNORECASE)
