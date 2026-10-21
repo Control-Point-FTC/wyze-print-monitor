@@ -72,6 +72,13 @@ from .icons import (
     tool_button,
 )
 from .styles import (
+    DOT_AMBER,
+    DOT_GREEN,
+    DOT_GREY,
+    DOT_RED,
+    PILL_BG,
+    PILL_BG_HOVER,
+    PILL_TEXT,
     APP_BG,
     CARD,
     DIVIDER,
@@ -97,13 +104,16 @@ QWidget {{
     font-family: "Segoe UI", sans-serif; font-size: 13px;
 }}
 QWidget#surface {{ background: {CARD}; }}
-QLabel#chip {{ border-radius: 10px; padding: 2px 10px; font-size: 11px; font-weight: 600; }}
-QLabel#overlayInfo {{ color: #d7d9dc; font-size: 12px; }}
-QPushButton#zoomChip {{
-    background: rgba(20, 21, 23, 190); color: {TEXT}; border-radius: 10px;
-    padding: 2px 10px; font-size: 11px; font-weight: 600; min-height: 0;
+QLabel#chip, QLabel#overlayInfo {{
+    background: {PILL_BG}; color: {PILL_TEXT}; border-radius: 11px;
+    padding: 0 10px; min-height: 22px; max-height: 22px; font-size: 11px; font-weight: 600;
 }}
-QPushButton#zoomChip:hover {{ background: rgba(60, 62, 66, 220); }}
+QLabel#overlayInfo {{ font-weight: 400; color: #c9cbce; }}
+QPushButton#zoomChip {{
+    background: {PILL_BG}; color: {PILL_TEXT}; border-radius: 11px;
+    padding: 0 10px; min-height: 22px; max-height: 22px; font-size: 11px; font-weight: 600;
+}}
+QPushButton#zoomChip:hover {{ background: {PILL_BG_HOVER}; }}
 QFrame#pill {{ background: rgba(24, 25, 27, 225); border: 1px solid rgba(255, 255, 255, 30); border-radius: 12px; }}
 QFrame#pill QToolButton {{ border: none; border-radius: 8px; padding: 6px 9px; color: {TEXT}; }}
 QFrame#pill QToolButton:hover {{ background: rgba(255, 255, 255, 28); }}
@@ -184,28 +194,28 @@ QMenu::item {{ padding: 5px 20px; }}
 QMenu::item:selected {{ background: {SELECTED}; }}
 """ + SLIDER_QSS
 
-CHIP_STYLES = {
-    "live": ("● LIVE", "#2f7d3a", "#ffffff"),
-    "connecting": ("Connecting…", "#8a6d2f", "#ffffff"),
-    "reconnecting": ("Reconnecting…", "#8a6d2f", "#ffffff"),
-    "error": ("Error", "#8a2f2f", "#ffffff"),
-    "idle": ("Idle", "#3d4148", "#d7d9dc"),
-    "stopped": ("Idle", "#3d4148", "#d7d9dc"),
+CHIP_STYLES = {  # stream state -> (text, status dot)
+    "live": ("LIVE", DOT_GREEN),
+    "connecting": ("Connecting…", DOT_AMBER),
+    "reconnecting": ("Reconnecting…", DOT_AMBER),
+    "error": ("Error", DOT_RED),
+    "idle": ("Idle", DOT_GREY),
+    "stopped": ("Idle", DOT_GREY),
 }
 
 
-def set_chip(label: QLabel, text: str, bg: str = "#3d4148", fg: str = "#ffffff") -> None:
-    """Show a pill label (hidden when ``text`` is empty). Restyles only on
-    change: this runs on a timer and re-polishing a stylesheet is costly."""
+def set_chip(label: QLabel, text: str, dot: str = "") -> None:
+    """Show an overlay pill (hidden when ``text`` is empty), with an
+    optional colored status dot. The pill's look comes from the shared
+    stylesheet; only the text changes, and only when it differs (this runs
+    on a timer)."""
     if not text:
         if not label.isHidden():
             label.hide()
         return
-    if label.text() != text:
-        label.setText(text)
-    if label.property("chipColors") != f"{bg}|{fg}":
-        label.setProperty("chipColors", f"{bg}|{fg}")
-        label.setStyleSheet(f"QLabel#chip {{ background: {bg}; color: {fg}; }}")
+    shown = f'<span style="color:{dot}">\u25cf</span>&nbsp; {text}' if dot else text
+    if label.text() != shown:
+        label.setText(shown)
     if label.isHidden():
         label.show()
 

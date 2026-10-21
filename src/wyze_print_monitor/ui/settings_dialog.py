@@ -307,7 +307,10 @@ class SettingsDialog(QDialog):
         self.test_alert_btn = QPushButton("Test alert")
         self.test_alert_btn.setToolTip("Shows the alert and plays the sound with the settings above.")
         self.test_alert_btn.clicked.connect(self._on_test_alert)
-        watch_form.addRow(self.test_alert_btn)
+        test_row = QHBoxLayout()  # a normal-size button, not a full-width bar
+        test_row.addWidget(self.test_alert_btn)
+        test_row.addStretch(1)
+        watch_form.addRow(test_row)
 
         self.sound_check = QCheckBox("Also alert me about unusual printer sounds")
         self.sound_check.setChecked(settings.sound_alerts)
