@@ -67,3 +67,22 @@ def test_updates_show_progress():
     from wyze_print_monitor.updater import INSTALLER_ARGS
 
     assert "/SILENT" in INSTALLER_ARGS and "/VERYSILENT" not in INSTALLER_ARGS
+
+
+def test_updates_never_wipe_the_runtime_first():
+    iss = (ROOT / "installer" / "wyze-print-monitor.iss").read_text(encoding="utf-8")
+    assert "[InstallDelete]" not in iss  # _internal (Python itself) stays during an update
+    uninstall = iss.split("[UninstallDelete]", 1)[1].split("\n[", 1)[0]
+    assert r"{app}\_internal" in uninstall
+
+
+def test_a_broken_check_is_treated_as_updating(monkeypatch):
+    launcher = _launcher()
+    shown = []
+
+    def broken():
+        raise ImportError("_ctypes")
+
+    monkeypatch.setattr(launcher, "setup_running", broken)
+    monkeypatch.setattr(launcher, "_message", shown.append)
+    assert launcher.run() == 0 and "being updated" in shown[0]

@@ -36,7 +36,11 @@ def setup_running() -> bool:
 
 
 def run() -> int:
-    if setup_running():
+    try:
+        updating = setup_running()
+    except Exception:  # noqa: BLE001 - e.g. _ctypes itself mid-replacement
+        updating = True
+    if updating:
         _message("Wyze Print Monitor is being updated.\n\nIt will open by itself in a moment, when the update finishes.")
         return 0
     try:

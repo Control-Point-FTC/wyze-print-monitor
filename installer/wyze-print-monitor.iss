@@ -93,10 +93,11 @@ Name: "aimodel"; Description: "Download the AI print-failure model (about 200 MB
 Source: "..\build\dist\WyzePrintMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
-[InstallDelete]
-; Updates replace the whole app folder, so files dropped by a newer
-; PyInstaller/Qt can't linger next to the old ones.
-Type: filesandordirs; Name: "{app}\_internal"
+; Updates overwrite the app's files in place — never delete _internal
+; first: it holds Python itself, and an app opened mid-update must still be
+; able to start and show "being updated" (see packaging/launcher.py).
+; Files a newer build no longer ships are left behind unused, and removed
+; with the app on uninstall.
 
 [Icons]
 ; The Start menu entry is what makes the app show up in Windows search.
@@ -106,6 +107,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "
 [UninstallDelete]
 ; The downloaded model (settings stay, like the rest of the user's data).
 Type: filesandordirs; Name: "{#ModelDir}"
+; Whatever older versions left in the app folder.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Registry]
 ; The app can add itself to startup (Settings → Launch at startup);
