@@ -17,6 +17,9 @@
 ; Must match APP_USER_MODEL_ID / INSTALLER_MUTEX in src/wyze_print_monitor/app.py.
 #define AppUserModelID "ControlPointFTC.WyzePrintMonitor"
 #define AppMutexName "WyzePrintMonitorRunning"
+; Held while Setup runs: the app's launcher shows "updating" instead of
+; starting with half-replaced files. Must match SETUP_MUTEX in packaging/launcher.py.
+#define SetupMutexName "WyzePrintMonitorSetup"
 ; Print watch model: must match failure_model.py (URL, SHA-256, file names).
 #define ModelURL "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
 #define ModelSHA256 "0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa"
@@ -69,6 +72,7 @@ Compression=lzma2/max
 SolidCompression=yes
 ; Close a running copy before replacing its files (and on uninstall).
 AppMutex={#AppMutexName}
+SetupMutex={#SetupMutexName}
 CloseApplications=yes
 RestartApplications=no
 
@@ -89,10 +93,11 @@ Name: "aimodel"; Description: "Download the AI print-failure model (about 200 MB
 Source: "..\build\dist\WyzePrintMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
-[InstallDelete]
-; Updates replace the whole app folder, so files dropped by a newer
-; PyInstaller/Qt can't linger next to the old ones.
-Type: filesandordirs; Name: "{app}\_internal"
+; Updates overwrite the app's files in place — never delete _internal
+; first: it holds Python itself, and an app opened mid-update must still be
+; able to start and show "being updated" (see packaging/launcher.py).
+; Files a newer build no longer ships are left behind unused, and removed
+; with the app on uninstall.
 
 [Icons]
 ; The Start menu entry is what makes the app show up in Windows search.
@@ -102,6 +107,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "
 [UninstallDelete]
 ; The downloaded model (settings stay, like the rest of the user's data).
 Type: filesandordirs; Name: "{#ModelDir}"
+; Whatever older versions left in the app folder.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Registry]
 ; The app can add itself to startup (Settings → Launch at startup);
