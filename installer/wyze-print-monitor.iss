@@ -17,6 +17,9 @@
 ; Must match APP_USER_MODEL_ID / INSTALLER_MUTEX in src/wyze_print_monitor/app.py.
 #define AppUserModelID "ControlPointFTC.WyzePrintMonitor"
 #define AppMutexName "WyzePrintMonitorRunning"
+; Held while Setup runs: the app's launcher shows "updating" instead of
+; starting with half-replaced files. Must match SETUP_MUTEX in packaging/launcher.py.
+#define SetupMutexName "WyzePrintMonitorSetup"
 ; Print watch model: must match failure_model.py (URL, SHA-256, file names).
 #define ModelURL "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
 #define ModelSHA256 "0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa"
@@ -69,6 +72,7 @@ Compression=lzma2/max
 SolidCompression=yes
 ; Close a running copy before replacing its files (and on uninstall).
 AppMutex={#AppMutexName}
+SetupMutex={#SetupMutexName}
 CloseApplications=yes
 RestartApplications=no
 

@@ -30,7 +30,9 @@ RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
 INSTALLER_PATTERN = re.compile(r"^WyzePrintMonitor-.*-setup\.exe$", re.IGNORECASE)
 USER_AGENT = f"WyzePrintMonitor/{__version__}"
 # Inno Setup flags: no window at all, no prompts, close the app if still open.
-INSTALLER_ARGS = ("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS")
+# /SILENT, not /VERYSILENT: no questions, but a progress window shows the
+# update happening (the app is closed meanwhile; it reopens at the end).
+INSTALLER_ARGS = ("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS")
 EXIT_WAIT_SECONDS = 120
 
 
