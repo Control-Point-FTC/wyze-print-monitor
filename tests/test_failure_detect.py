@@ -130,9 +130,27 @@ def test_pause_delay_setting():
     assert fd.confirm_checks(60, 10) == 7
     assert fd.confirm_checks(60, 30) == 3  # 0, 30, 60 s
     assert fd.confirm_checks(120, 30) == 5
-    assert fd.safe_checks(10) == 30 and fd.safe_checks(30) == 10
+
     scorer = FailureScorer(pause_confirm_checks=6)
     _feed(scorer, 0.0, 60)
     levels = _feed(scorer, 2.5, 30)
     first_failure = levels.index(FAILURE)
     assert levels[first_failure - 5 : first_failure] == [WARNING] * 5
+
+
+def test_quiet_start_is_time_even_if_the_interval_changes():
+    # 270 s at 30 s checks, then faster checks: quiet ends at 300 s watched,
+    # not after another 30 checks.
+    scorer = FailureScorer(interval_s=30)
+    _feed(scorer, 0.0, 9)
+    scorer.interval_s = 10
+    _feed(scorer, 0.0, 3)
+    assert scorer.watched_s == pytest.approx(300)
+    assert WARNING in _feed(scorer, 3.0, 10)
+
+    # And the other way: 100 s at 10 s, then 30 s checks — still quiet at 280 s.
+    slow = FailureScorer(interval_s=10)
+    _feed(slow, 0.0, 10)
+    slow.interval_s = 30
+    assert set(_feed(slow, 3.0, 6)) == {OK}
+    assert slow.watched_s == pytest.approx(280)

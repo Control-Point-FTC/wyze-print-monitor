@@ -51,13 +51,15 @@ from ..failure_detect import (
     FailureScorer,
     confirm_checks,
     draw_detections,
-    safe_checks,
 )
 from ..print_watch import SoundWorker, VisionResult, VisionWorker
 from ..sound_watch import describe as describe_sound
 from .alarm import Alarm
 
 STUDIO_POLL_MS = 3000
+# Studio's card shows "N/A" both briefly (reconnecting, starting a print)
+# and once a print is over; only a lasting "N/A" means the print ended.
+IDLE_AFTER_UNREADABLE_S = 60.0
 PAUSE_POLL_MS = 1000  # while waiting for Studio to confirm a pause
 PAUSE_RETRY_S = 6.0  # no Resume button yet: press Pause once more
 PAUSE_GIVE_UP_S = 15.0  # still running: tell the user to pause it
@@ -167,6 +169,7 @@ class PrintWatch(QObject):
         self._view = StudioView()
         self._printing: bool | None = None  # None: unknown (no Studio)
         self._print_paused = False
+        self._unreadable_since: float | None = None
         self._pause: _PendingPause | None = None
         self._unconfirmed_pause: _PendingPause | None = None  # gave up waiting on this one
         self._paused_by_us = False
@@ -232,7 +235,7 @@ class PrintWatch(QObject):
         self._scorer.sensitivity = SENSITIVITY.get(self.settings.ai_sensitivity, 1.0)
         interval = self.check_interval()
         self._scorer.pause_confirm_checks = confirm_checks(self.pause_after(), interval)
-        self._scorer.init_safe_checks = safe_checks(interval)
+        self._scorer.interval_s = interval
         if not self._url:
             self._poll.stop()
             self.status_changed.emit()
@@ -342,10 +345,20 @@ class PrintWatch(QObject):
         elif view.ours and view.status is not None:
             # The status label, not the buttons: while heating there's no
             # Pause button yet, but the print is under way.
+            self._unreadable_since = None
             self._set_print_state(view.status != "idle", view.status == "paused")
-        # else: Studio is open but not showing the camera printer's status
-        # (another tab or printer, or "N/A" while it reconnects): nothing new
-        # is known — keep what we had.
+        elif view.ours:
+            # The camera printer's card says "N/A": a blink, or the print's
+            # over. Only a lasting one ends it.
+            now = time.monotonic()
+            if self._unreadable_since is None:
+                self._unreadable_since = now
+            elif now - self._unreadable_since >= IDLE_AFTER_UNREADABLE_S:
+                self._set_print_state(False, False)
+        # else: Studio is open but not showing the camera printer (another
+        # tab or printer): nothing new is known — keep what we had.
+        if not view.ours:
+            self._unreadable_since = None
         self._advance_pause()
         idle = self._printing is False or self._print_paused
         for worker in (self._vision, self._sound):

@@ -61,13 +61,6 @@ def confirm_checks(pause_after_s: float, interval_s: float) -> int:
     return max(2, math.ceil(pause_after_s / interval_s) + 1)
 
 
-def safe_checks(interval_s: float) -> int:
-    """Checks in the quiet start of a print: the same ~5 minutes whatever
-    the check interval (Obico's 30 frames at its 10 s)."""
-    if interval_s <= 0:
-        return INIT_SAFE_FRAME_NUM
-    return max(3, math.ceil(INIT_SAFE_S / interval_s))
-
 
 # ------------------------------------------------------------------ model I/O
 def preprocess(frame: np.ndarray, size: tuple[int, int] = (416, 416)) -> np.ndarray:
@@ -156,12 +149,17 @@ class FailureScorer:
     failure_streak: int = 0
     last_p: float = 0.0
     pause_confirm_checks: int = PAUSE_CONFIRM_CHECKS
-    init_safe_checks: int = INIT_SAFE_FRAME_NUM
+    # Seconds between checks (set with the interval setting) and how long
+    # this session has been watched: the quiet start of a print is ~5
+    # minutes of watching however often it checks, even if that changes.
+    interval_s: float = CHECK_INTERVAL_S
+    watched_s: float = 0.0
 
     def reset_session(self) -> None:
         """A new print (or watching resumed): forget short-term history."""
         self.ewm_mean = self.rolling_mean_short = self.last_p = 0.0
         self.frames = self.failure_streak = 0
+        self.watched_s = 0.0
 
     def update(self, detections: list[Detection]) -> str:
         """Fold one check in; returns OK, WARNING or FAILURE (= pause now)."""
@@ -170,6 +168,7 @@ class FailureScorer:
         b = self.baseline
         self.last_p = p
         self.frames += 1
+        self.watched_s += self.interval_s
         b.lifetime_frames += 1
         self.ewm_mean = p * alpha + self.ewm_mean * (1 - alpha)
         self.rolling_mean_short = _rolling(p, self.rolling_mean_short, self.frames, ROLLING_WIN_SHORT)
@@ -184,7 +183,7 @@ class FailureScorer:
         return WARNING if self._failing(1.0) else OK
 
     def _failing(self, escalating: float) -> bool:
-        if self.frames < self.init_safe_checks:
+        if self.watched_s < INIT_SAFE_S - 1e-6:
             return False
         adjusted = (self.ewm_mean - self.baseline.rolling_mean_long) * self.sensitivity / escalating
         if adjusted < THRESHOLD_LOW:

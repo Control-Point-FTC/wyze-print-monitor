@@ -411,7 +411,7 @@ def test_settings_feed_the_scorer_and_worker(env):
     main.settings.ai_check_interval_s = 20
     w.apply_settings()
     assert w._scorer.pause_confirm_checks == 4  # 0, 20, 40, 60 s
-    assert w._scorer.init_safe_checks == 15  # still ~5 minutes
+    assert w._scorer.interval_s == 20
     main.settings.ai_check_interval_s = 7  # not an offered value
     assert w.check_interval() == 10
 
@@ -424,12 +424,21 @@ def test_heating_counts_as_printing_without_a_pause_button(env):
     assert w._printing is True and not w._print_paused
 
 
-def test_unreadable_status_keeps_what_we_knew(env):
-    w, _main, studio, _clock, _n = env
+def test_a_brief_na_keeps_the_print_but_a_lasting_one_ends_it(env):
+    w, _main, studio, clock, _n = env
     studio.controls = {}
-    studio.status = None  # Studio shows "N/A" for a moment
+    studio.status = None  # Studio's card shows "N/A"
     w._poll_studio()
-    assert w._printing is True
-    studio.status = "idle"
+    clock.now += 20
     w._poll_studio()
-    assert w._printing is False
+    assert w._printing is True  # a blink (e.g. starting the next print)
+    studio.controls, studio.status = dict(PRINTING), ""
+    w._poll_studio()
+    studio.controls, studio.status = {}, None
+    w._poll_studio()
+    clock.now += 30
+    w._poll_studio()
+    assert w._printing is True  # the timer restarted after the status came back
+    clock.now += pw.IDLE_AFTER_UNREADABLE_S
+    w._poll_studio()
+    assert w._printing is False  # the print is over
