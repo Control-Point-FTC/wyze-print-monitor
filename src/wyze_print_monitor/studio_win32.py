@@ -394,12 +394,23 @@ if sys.platform == "win32":
         status = classify_print_status(status_from_bar(statics))
         return status, controls_from_bar(status, bars[bar])
 
+    def read_print_state(top: int) -> tuple[str | None, dict[str, int]]:
+        """(status kind or None, controls) for the print Studio shows."""
+        bar = read_print_bar(top)
+        status, controls = bar if bar is not None else (None, {})
+        if not controls:
+            controls = find_labeled_controls(top)
+            if status is None and controls:
+                # A labeled build without a readable status: the buttons say it.
+                status = "paused" if "resume" in controls else "running" if "pause" in controls else None
+        return status, controls
+
     def find_print_controls(top: int) -> dict[str, int]:
         """Studio's print-control buttons: {"pause"|"resume"|"stop": hwnd}."""
-        bar = read_print_bar(top)
-        if bar is not None and bar[1]:
-            return bar[1]
-        # Studio builds with labeled buttons.
+        return read_print_state(top)[1]
+
+    def find_labeled_controls(top: int) -> dict[str, int]:
+        """Studio builds with labeled print buttons."""
         found: dict[str, int] = {}
         for hwnd in _children(top):
             kind = classify_control(_text(hwnd))
@@ -462,6 +473,9 @@ else:  # pragma: no cover - non-Windows stubs
 
     def find_print_controls(top: int) -> dict[str, int]:
         return {}
+
+    def read_print_state(top: int) -> tuple[str | None, dict[str, int]]:
+        return None, {}
 
     def press(hwnd: int) -> bool:
         return False

@@ -360,15 +360,19 @@ class SettingsDialog(QDialog):
         self.pause_after_combo.setEnabled(on and self.auto_pause_check.isChecked())
 
     def _on_test_alert(self) -> None:
-        """Try the sound/notification choices as currently picked (unsaved)."""
+        """Try the sound/notification choices as currently picked (unsaved).
+        Clicking again stops it (Settings is modal: the app's own Dismiss
+        and Silence can't be reached while it's open)."""
         if self._watch is None:
+            return
+        if self._stop_test_alert():
             return
         s = self._settings
         saved = (s.ai_sound, s.ai_notifications, s.ai_popup)
         s.ai_sound = self.sound_combo.currentData()
         s.ai_notifications = self.notify_check.isChecked()
         s.ai_popup = self.popup_check.isChecked()
-        s.ai_popup = self.popup_check.isChecked()
+        self.test_alert_btn.setText("Stop test alert")
         try:
             self._watch.test_alert()
         finally:
@@ -401,7 +405,17 @@ class SettingsDialog(QDialog):
             self._watch.remove_model()
             self._refresh_watch()
 
+    def _stop_test_alert(self) -> bool:
+        """End a running test alert; True if there was one."""
+        self.test_alert_btn.setText("Test alert")
+        watch = self._watch
+        if watch is not None and watch.alert is not None and watch.alert.severity == "test":
+            watch.dismiss()
+            return True
+        return False
+
     def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        self._stop_test_alert()  # a test never outlives Settings
         if self._watch is not None:
             for signal, slot in (
                 (self._watch.download_progress, self._on_download_progress),
@@ -510,6 +524,7 @@ class SettingsDialog(QDialog):
         s.ai_check_interval_s = self.interval_combo.currentData()
         s.ai_sound = self.sound_combo.currentData()
         s.ai_notifications = self.notify_check.isChecked()
+        s.ai_popup = self.popup_check.isChecked()
         mac =self.camera_combo.currentData()
         if mac:
             s.camera_mac = mac

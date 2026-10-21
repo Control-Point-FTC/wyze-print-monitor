@@ -141,3 +141,20 @@ def test_popup_alert_follows_the_setting_and_the_alert(window, monkeypatch):
     app.processEvents()
     assert watch.alert is not None and not w.alert_popup.isVisible()
     watch.dismiss()
+
+
+def test_settings_test_alert_can_be_stopped_and_popup_choice_saves(window, monkeypatch):
+    w, app = window
+    from wyze_print_monitor.ui.settings_dialog import SettingsDialog
+
+    monkeypatch.setattr(w.print_watch.alarm, "play", lambda sound, urgent: None)
+    d = SettingsDialog(w.settings, w.controller, w)
+    d.test_alert_btn.click()
+    assert w.print_watch.alert.severity == "test" and d.test_alert_btn.text() == "Stop test alert"
+    d.test_alert_btn.click()
+    assert w.print_watch.alert is None and d.test_alert_btn.text() == "Test alert"
+    d.test_alert_btn.click()
+    d.popup_check.setChecked(False)
+    monkeypatch.setattr("wyze_print_monitor.ui.settings_dialog.save_secret", lambda *a: True)
+    d._on_save()  # closing Settings also ends the test
+    assert w.settings.ai_popup is False and w.print_watch.alert is None

@@ -39,9 +39,18 @@ class FakeStudio:
         self.running, self.ours, self.controls = True, True, dict(PRINTING)
         self.obeys = True
         self.pressed = []
+        self.status = ""  # "" = follow the buttons; else a status kind or None (unreadable)
+
+    def current_status(self):
+        if self.status != "":
+            return self.status
+        if "resume" in self.controls:
+            return "paused"
+        return "running" if "pause" in self.controls else "idle"
 
     def view(self, _row):
-        return pw.StudioView(self.running, self.running and self.ours, dict(self.controls) if self.ours else {})
+        ours = self.running and self.ours
+        return pw.StudioView(self.running, ours, dict(self.controls) if ours else {}, self.current_status() if ours else None)
 
     def press(self, hwnd):
         self.pressed.append(hwnd)
@@ -401,6 +410,26 @@ def test_settings_feed_the_scorer_and_worker(env):
     main.settings.ai_pause_after_s = 60
     main.settings.ai_check_interval_s = 20
     w.apply_settings()
-    assert w._scorer.pause_confirm_checks == 3
+    assert w._scorer.pause_confirm_checks == 4  # 0, 20, 40, 60 s
+    assert w._scorer.init_safe_checks == 15  # still ~5 minutes
     main.settings.ai_check_interval_s = 7  # not an offered value
     assert w.check_interval() == 10
+
+
+def test_heating_counts_as_printing_without_a_pause_button(env):
+    w, _main, studio, _clock, _n = env
+    studio.controls = {"stop": STOP}
+    studio.status = "running"  # "Heating": only Stop is shown
+    w._poll_studio()
+    assert w._printing is True and not w._print_paused
+
+
+def test_unreadable_status_keeps_what_we_knew(env):
+    w, _main, studio, _clock, _n = env
+    studio.controls = {}
+    studio.status = None  # Studio shows "N/A" for a moment
+    w._poll_studio()
+    assert w._printing is True
+    studio.status = "idle"
+    w._poll_studio()
+    assert w._printing is False

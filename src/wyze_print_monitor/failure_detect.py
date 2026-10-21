@@ -36,7 +36,8 @@ ROLLING_WIN_SHORT = 310
 ROLLING_WIN_LONG = 7200
 THRESHOLD_LOW = 0.38
 THRESHOLD_HIGH = 0.78
-INIT_SAFE_FRAME_NUM = 30  # first ~5 min of a session: never alert
+INIT_SAFE_FRAME_NUM = 30  # first ~5 min of a session (at 10 s checks): never alert
+INIT_SAFE_S = INIT_SAFE_FRAME_NUM * CHECK_INTERVAL_S
 ROLLING_MEAN_SHORT_MULTIPLE = 3.8
 ESCALATING_FACTOR = 1.75
 
@@ -50,10 +51,22 @@ PAUSE_AFTER_S = (30, 60, 120)
 
 
 def confirm_checks(pause_after_s: float, interval_s: float) -> int:
-    """How many failing checks in a row make "held for pause_after_s"."""
+    """How many failing checks in a row make "held for pause_after_s".
+
+    N checks span (N - 1) intervals from the first failing one to the last,
+    so it takes one more check than pause_after_s / interval_s.
+    """
     if interval_s <= 0:
         return PAUSE_CONFIRM_CHECKS
-    return max(2, math.ceil(pause_after_s / interval_s))
+    return max(2, math.ceil(pause_after_s / interval_s) + 1)
+
+
+def safe_checks(interval_s: float) -> int:
+    """Checks in the quiet start of a print: the same ~5 minutes whatever
+    the check interval (Obico's 30 frames at its 10 s)."""
+    if interval_s <= 0:
+        return INIT_SAFE_FRAME_NUM
+    return max(3, math.ceil(INIT_SAFE_S / interval_s))
 
 
 # ------------------------------------------------------------------ model I/O
@@ -143,6 +156,7 @@ class FailureScorer:
     failure_streak: int = 0
     last_p: float = 0.0
     pause_confirm_checks: int = PAUSE_CONFIRM_CHECKS
+    init_safe_checks: int = INIT_SAFE_FRAME_NUM
 
     def reset_session(self) -> None:
         """A new print (or watching resumed): forget short-term history."""
@@ -170,7 +184,7 @@ class FailureScorer:
         return WARNING if self._failing(1.0) else OK
 
     def _failing(self, escalating: float) -> bool:
-        if self.frames < INIT_SAFE_FRAME_NUM:
+        if self.frames < self.init_safe_checks:
             return False
         adjusted = (self.ewm_mean - self.baseline.rolling_mean_long) * self.sensitivity / escalating
         if adjusted < THRESHOLD_LOW:

@@ -73,7 +73,21 @@ class Alarm(QObject):
         self._cutoff.timeout.connect(self.stop)
 
     def play(self, sound: str, urgent: bool) -> None:
-        """``sound`` is the user's choice; urgent alerts loop as an alarm."""
+        """``sound`` is the user's choice; urgent alerts loop as an alarm.
+        Never raises: a missing/broken audio device mustn't stop the alert."""
+        try:
+            self._play(sound, urgent)
+        except (RuntimeError, OSError):
+            self.playing = False
+            self._cutoff.stop()
+            try:
+                import winsound
+
+                winsound.MessageBeep(winsound.MB_ICONHAND)
+            except (ImportError, RuntimeError, OSError):
+                pass
+
+    def _play(self, sound: str, urgent: bool) -> None:
         self.stop()
         if sound == SOUND_OFF:
             return

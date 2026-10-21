@@ -51,6 +51,7 @@ from ..failure_detect import (
     FailureScorer,
     confirm_checks,
     draw_detections,
+    safe_checks,
 )
 from ..print_watch import SoundWorker, VisionResult, VisionWorker
 from ..sound_watch import describe as describe_sound
@@ -98,6 +99,8 @@ class StudioView:
     running: bool = False  # Studio is open
     ours: bool = False  # its Device tab shows the camera's printer
     controls: dict = field(default_factory=dict)  # {"pause"|"resume"|"stop": hwnd}, only when ours
+    # Studio's print status when ours: "running" | "paused" | "idle" | None (unreadable)
+    status: str | None = None
 
 
 class StudioObserver:
@@ -125,7 +128,8 @@ class StudioObserver:
         self._selected_ok = studio_win32.camera_printer_selected(selected, configured_row, self._selected_ok)
         if not studio_win32.may_control_print(self._selected_ok, configured_row, len(layout.printer_rows)):
             return StudioView(running=True)
-        return StudioView(True, True, studio_win32.find_print_controls(layout.host))
+        status, controls = studio_win32.read_print_state(layout.host)
+        return StudioView(True, True, controls, status)
 
 
 @dataclass
@@ -228,6 +232,7 @@ class PrintWatch(QObject):
         self._scorer.sensitivity = SENSITIVITY.get(self.settings.ai_sensitivity, 1.0)
         interval = self.check_interval()
         self._scorer.pause_confirm_checks = confirm_checks(self.pause_after(), interval)
+        self._scorer.init_safe_checks = safe_checks(interval)
         if not self._url:
             self._poll.stop()
             self.status_changed.emit()
@@ -334,11 +339,13 @@ class PrintWatch(QObject):
         view = self._observe()
         if not view.running:
             self._set_print_state(None, False)
-        elif view.ours:
-            c = view.controls
-            self._set_print_state("pause" in c or "resume" in c, "resume" in c)
-        # else: Studio is open but not showing the camera printer's controls
-        # (another tab or printer): nothing new is known — keep what we had.
+        elif view.ours and view.status is not None:
+            # The status label, not the buttons: while heating there's no
+            # Pause button yet, but the print is under way.
+            self._set_print_state(view.status != "idle", view.status == "paused")
+        # else: Studio is open but not showing the camera printer's status
+        # (another tab or printer, or "N/A" while it reconnects): nothing new
+        # is known — keep what we had.
         self._advance_pause()
         idle = self._printing is False or self._print_paused
         for worker in (self._vision, self._sound):

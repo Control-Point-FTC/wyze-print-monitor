@@ -125,10 +125,12 @@ def test_draw_detections_returns_a_marked_copy():
 
 
 def test_pause_delay_setting():
-    assert fd.confirm_checks(30, 10) == 3
-    assert fd.confirm_checks(60, 10) == 6
-    assert fd.confirm_checks(30, 20) == 2
-    assert fd.confirm_checks(120, 30) == 4
+    # N failing checks span (N - 1) intervals: enough to cover the delay.
+    assert fd.confirm_checks(30, 10) == 4
+    assert fd.confirm_checks(60, 10) == 7
+    assert fd.confirm_checks(60, 30) == 3  # 0, 30, 60 s
+    assert fd.confirm_checks(120, 30) == 5
+    assert fd.safe_checks(10) == 30 and fd.safe_checks(30) == 10
     scorer = FailureScorer(pause_confirm_checks=6)
     _feed(scorer, 0.0, 60)
     levels = _feed(scorer, 2.5, 30)
