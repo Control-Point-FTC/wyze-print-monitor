@@ -13,7 +13,8 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .ui.main_window import MainWindow
-from .ui.styles import DARK_QSS
+from .config import config_dir
+from .ui.styles import DARK_QSS, checkmark_qss
 
 
 ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
@@ -236,7 +237,7 @@ def main() -> int:
     app.setApplicationName("Wyze Print Monitor")
     app.setOrganizationName("Control-Point-FTC")
     app.setWindowIcon(app_icon())
-    app.setStyleSheet(DARK_QSS)
+    app.setStyleSheet(DARK_QSS + checkmark_qss(os.path.join(config_dir(), "ui")))
     instance_lock = _claim_single_instance()
     if instance_lock is None:
         _signal_running_instance()

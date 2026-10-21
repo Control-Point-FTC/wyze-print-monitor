@@ -22,7 +22,7 @@ from .adjust_panel import ImageAdjustPanel
 from ..quality import LABELS as QUALITY_LABELS
 from ..quality import QUALITIES
 from ..wyze_control import friendly_model
-from .styles import GREEN, TEXT_DIM
+from .styles import DOT_AMBER, DOT_BLUE, DOT_GREEN, DOT_GREY, DOT_RED
 from .views import CHIP_STYLES, CameraPanel, ToggleTile, VideoView, set_chip
 
 SYNC_MS = 200
@@ -290,20 +290,22 @@ class PanelBinder(QObject):
     def _sync_video(self) -> None:
         m, v = self.main, self.video
         state = getattr(m, "_stream_state", "idle")
-        text, bg, fg = CHIP_STYLES.get(state, CHIP_STYLES["idle"])
-        set_chip(v.state_chip, text, bg, fg)
+        text, dot = CHIP_STYLES.get(state, CHIP_STYLES["idle"])
+        set_chip(v.state_chip, text, dot)
         info = m.stream_info_label.text() if state == "live" else ""
         if v.info.text() != info:
             v.info.setText(info)
+        if v.info.isHidden() == bool(info):
+            v.info.setVisible(bool(info))  # an empty pill would show as a blob
         if m._recorder is not None and m._rec_start is not None:
             elapsed = int(time.monotonic() - m._rec_start)
-            set_chip(v.rec_chip, f"● REC {elapsed // 60:02d}:{elapsed % 60:02d}", "#a33a3a")
+            set_chip(v.rec_chip, f"REC {elapsed // 60:02d}:{elapsed % 60:02d}", DOT_RED)
         else:
             set_chip(v.rec_chip, "")
         if m._timelapse is not None:
-            set_chip(v.timelapse_chip, f"Timelapse · {m._timelapse.saved} frames", "#3a4f7a")
+            set_chip(v.timelapse_chip, f"Timelapse · {m._timelapse.saved} frames", DOT_BLUE)
         elif m._compile_worker is not None:
-            set_chip(v.timelapse_chip, "Compiling timelapse…", "#3a4f7a")
+            set_chip(v.timelapse_chip, "Compiling timelapse…", DOT_AMBER)
         else:
             set_chip(v.timelapse_chip, "")
         silence = m.print_watch.alarm.playing and not v.alert.isHidden()
@@ -313,16 +315,11 @@ class PanelBinder(QObject):
         if watch_text:
             word = watch_text.split(": ", 1)[-1]
             risk = m.print_watch.risk if m.print_watch.last_check else 0.0
-            dot = "#e8574a" if risk >= 2 / 3 else "#e0a040" if risk >= 1 / 3 else GREEN
+            dot = DOT_RED if risk >= 2 / 3 else DOT_AMBER if risk >= 1 / 3 else DOT_GREEN
             if not m.print_watch.last_check or word.startswith(("idle", "model", "waiting", "stopped", "print paused", "pausing")):
-                dot = TEXT_DIM  # not watching right now
+                dot = DOT_GREY  # not watching right now
             # Same see-through pill as the zoom chip; only the dot has color.
-            set_chip(
-                v.watch_chip,
-                f'<span style="color:{dot}">\u25cf</span>&nbsp; AI · {word}',
-                "rgba(20, 21, 23, 190)",
-                "#d7d9dc",
-            )
+            set_chip(v.watch_chip, f"AI · {word}", dot)
             v.watch_chip.setToolTip(watch_text)
         else:
             set_chip(v.watch_chip, "")
