@@ -155,7 +155,8 @@ class FailureScorer:
         normal toward it, partly and capped, so the same harmless thing
         alerts less; it drifts back down by itself if the scene changes."""
         b = self.baseline
-        if self.ewm_mean > b.rolling_mean_long:
+        if self.ewm_mean > b.rolling_mean_long and b.rolling_mean_long < TEACH_MAX:
+            # Only ever raises it (a normal already above the cap stays).
             b.rolling_mean_long += TEACH_STEP * (self.ewm_mean - b.rolling_mean_long)
             b.rolling_mean_long = min(b.rolling_mean_long, TEACH_MAX)
         # Count it as real history, so the next checks don't simply undo it.

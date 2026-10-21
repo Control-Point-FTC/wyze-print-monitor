@@ -393,10 +393,11 @@ class PrintWatch(QObject):
             self._paused_by_us = False
             self._set_alert(None)
         if was_paused and not paused and printing:
-            # Resumed (here or in Studio): watch afresh, don't re-pause on
-            # the old evidence.
+            # Resumed (here or in Studio): the AI watches afresh, so it
+            # doesn't re-pause on the old evidence. Same print, so the sound
+            # check keeps what it learned (and any "Looks fine" tolerance).
             self._paused_by_us = False
-            self._reset_session()
+            self._vision_reset()
             if self.alert is not None and self.alert.severity in ("paused", "failure", "pause_failed"):
                 self._set_alert(None)
         self._printing = printing

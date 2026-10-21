@@ -189,3 +189,10 @@ def test_teaching_is_capped():
     for _ in range(10):
         scorer.teach_normal()
     assert scorer.baseline.rolling_mean_long <= fd.TEACH_MAX
+
+
+def test_teaching_never_lowers_a_high_normal():
+    scorer = FailureScorer(Baseline(rolling_mean_long=1.5, lifetime_frames=5000))
+    scorer.ewm_mean = 2.0
+    scorer.teach_normal()
+    assert scorer.baseline.rolling_mean_long == 1.5

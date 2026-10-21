@@ -489,3 +489,18 @@ def test_looks_fine_on_a_sound_alert_teaches_the_sound_side_only(env):
     assert w._sound.teach_requested and not w._sound.reset_requested
     assert not w._vision.teach_requested and not w._vision.reset_requested
     w._vision = w._sound = None
+
+
+def test_resuming_keeps_the_sound_checks_learning(env):
+    w, _main, studio, _clock, _n = env
+
+    class FakeWorker:
+        teach_requested = reset_requested = paused = False
+
+    w._vision, w._sound = FakeWorker(), FakeWorker()
+    studio.controls = dict(PAUSED)
+    w._poll_studio()
+    studio.controls = dict(PRINTING)  # resumed
+    w._poll_studio()
+    assert w._vision.reset_requested and not w._sound.reset_requested
+    w._vision = w._sound = None

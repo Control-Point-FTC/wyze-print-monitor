@@ -314,7 +314,7 @@ class PanelBinder(QObject):
             word = watch_text.split(": ", 1)[-1]
             risk = m.print_watch.risk if m.print_watch.last_check else 0.0
             dot = "#e8574a" if risk >= 2 / 3 else "#e0a040" if risk >= 1 / 3 else GREEN
-            if not m.print_watch.last_check or word.startswith(("idle", "model", "waiting", "stopped")):
+            if not m.print_watch.last_check or word.startswith(("idle", "model", "waiting", "stopped", "print paused", "pausing")):
                 dot = TEXT_DIM  # not watching right now
             # Same see-through pill as the zoom chip; only the dot has color.
             set_chip(
