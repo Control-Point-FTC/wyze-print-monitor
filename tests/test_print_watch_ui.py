@@ -66,7 +66,8 @@ def env(tmp_path, monkeypatch):
     studio = FakeStudio()
     clock = Clock()
     monkeypatch.setattr(pw, "save_settings", lambda s: None)
-    monkeypatch.setattr(pw, "_beep", lambda urgent: None)
+    sounds = []
+    monkeypatch.setattr(pw.Alarm, "play", lambda self, sound, urgent: sounds.append((sound, urgent)))
     monkeypatch.setattr(pw.StudioObserver, "observe", lambda self, row: studio.view(row))
     monkeypatch.setattr(pw.studio_win32, "press", studio.press)
     monkeypatch.setattr(pw.time, "monotonic", clock)
@@ -355,3 +356,51 @@ def test_sound_trouble_is_shown(env):
     assert "sound alerts off (the camera stream has no audio)" in w.status_text()
     w._sound_status = "listening"
     assert "sound" not in w.status_text()
+
+
+def test_only_failures_setting_skips_warnings(env):
+    w, main, _studio, _clock, notes = env
+    main.settings.ai_alert_level = "failures"
+    w._on_checked(_result(WARNING))
+    assert w.alert is None and notes == []
+    w._on_checked(_result(FAILURE))
+    assert w.alert is not None
+
+
+def test_notifications_can_be_turned_off(env):
+    w, main, _studio, _clock, notes = env
+    main.settings.ai_notifications = False
+    w._on_checked(_result(WARNING))
+    assert w.alert.severity == "warning" and notes == []
+
+
+def test_sound_choice_and_urgency(env, monkeypatch):
+    w, main, studio, _clock, _n = env
+    played = []
+    monkeypatch.setattr(w.alarm, "play", lambda sound, urgent: played.append((sound, urgent)))
+    w._on_checked(_result(WARNING))
+    main.settings.ai_sound = "beep"
+    w._on_checked(_result(FAILURE))  # pausing: urgent
+    w._poll_studio()  # confirmed paused: stays urgent
+    assert played == [("alarm", False), ("beep", True), ("beep", True)]
+
+
+def test_test_alert_plays_and_dismisses(env, monkeypatch):
+    w, _main, studio, _clock, notes = env
+    played = []
+    monkeypatch.setattr(w.alarm, "play", lambda sound, urgent: played.append(urgent))
+    w.test_alert()
+    assert w.alert.severity == "test" and played == [True] and notes == ["Test alert"]
+    assert w.alert.snapshot == "" and studio.pressed == []
+    w.dismiss()
+    assert w.alert is None
+
+
+def test_settings_feed_the_scorer_and_worker(env):
+    w, main, _studio, _clock, _n = env
+    main.settings.ai_pause_after_s = 60
+    main.settings.ai_check_interval_s = 20
+    w.apply_settings()
+    assert w._scorer.pause_confirm_checks == 3
+    main.settings.ai_check_interval_s = 7  # not an offered value
+    assert w.check_interval() == 10

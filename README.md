@@ -206,8 +206,17 @@ failure-detection model.
   sounds from the camera's microphone and alerts on grinding, clicking or a
   loud bang. Sound only ever alerts.
 
-It checks one frame every 10 seconds, only while Studio shows a print
-running — about 1% of a modern CPU. *Looks fine* on an alert keeps it quiet
+**How you're told:** a banner on the video (with *Pause*, *Stop print…*,
+*Looks fine* and *Silence*), a Windows notification, and a sound — by
+default an **alarm that repeats until you respond** for likely failures,
+and a short chime for "take a look". Settings → Print watch lets you choose
+what alerts you (possible problems, or only likely failures), the sound
+(alarm / chime / silent), notifications, how long a failure must last
+before it pauses (30 s / 1 min / 2 min) and how often it checks (10 / 20 /
+30 s); *Test alert* shows exactly what you'll get.
+
+It only runs while Studio shows a print running — about 1% of a modern CPU
+at the default 10-second checks. *Looks fine* on an alert keeps it quiet
 for 30 minutes. Single frames are never trusted: like Obico, it compares a
 smoothed score with what's normal for your camera, and stays quiet for the
 first few minutes of each print.

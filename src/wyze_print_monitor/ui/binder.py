@@ -152,6 +152,7 @@ class PanelBinder(QObject):
         v.alert.pause_btn.clicked.connect(lambda: watch.pause_print() or m.status_message.emit(
             "Couldn't pause: Studio isn't showing this printer's Pause button."))
         v.alert.resume_btn.clicked.connect(watch.resume_print)
+        v.alert.silence_btn.clicked.connect(watch.silence)
         v.alert.stop_btn.clicked.connect(lambda: watch.stop_print(v.window()))
         v.alert.view_btn.clicked.connect(self._view_alert_snapshot)
 
@@ -296,6 +297,9 @@ class PanelBinder(QObject):
             set_chip(v.timelapse_chip, "Compiling timelapse…", "#3a4f7a")
         else:
             set_chip(v.timelapse_chip, "")
+        silence = m.print_watch.alarm.playing and not v.alert.isHidden()
+        if v.alert.silence_btn.isVisible() != silence:
+            v.alert.silence_btn.setVisible(silence)
         watch_text = m.print_watch.status_text()
         if watch_text:
             word = watch_text.split(": ", 1)[-1]

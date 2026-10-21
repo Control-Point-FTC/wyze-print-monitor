@@ -42,6 +42,11 @@ from ..quality import QUALITIES
 from ..wyze_control import CameraInfo, WyzeController
 
 
+def _select(combo: QComboBox, value) -> None:
+    index = combo.findData(value)
+    combo.setCurrentIndex(index if index >= 0 else 0)
+
+
 class SettingsDialog(QDialog):
     """Edits Settings; tests the Wyze login and fills the camera picker."""
 
@@ -208,8 +213,7 @@ class SettingsDialog(QDialog):
         intro = QLabel(
             "Watches the camera for failed prints (spaghetti, blobs, parts knocked "
             "loose) with an AI model that runs on this PC — no account, no cloud. "
-            "It checks one frame every 10 seconds, only while Studio shows a print "
-            "running."
+            "It only runs while Studio shows a print running."
         )
         intro.setWordWrap(True)
         column.addWidget(intro)
@@ -258,6 +262,38 @@ class SettingsDialog(QDialog):
         index = self.sensitivity_combo.findData(settings.ai_sensitivity)
         self.sensitivity_combo.setCurrentIndex(index if index >= 0 else 1)
         watch_form.addRow("Sensitivity", self.sensitivity_combo)
+        self.alert_level_combo = QComboBox()
+        self.alert_level_combo.addItem("Possible problems and likely failures", "all")
+        self.alert_level_combo.addItem("Only likely failures", "failures")
+        _select(self.alert_level_combo, settings.ai_alert_level)
+        watch_form.addRow("Alert me about", self.alert_level_combo)
+        self.pause_after_combo = QComboBox()
+        for seconds, text in ((30, "30 seconds"), (60, "1 minute"), (120, "2 minutes")):
+            self.pause_after_combo.addItem(text, seconds)
+        _select(self.pause_after_combo, settings.ai_pause_after_s)
+        self.pause_after_combo.setToolTip("How long a failure has to keep showing before it pauses.")
+        watch_form.addRow("Pause once sure for", self.pause_after_combo)
+        self.interval_combo = QComboBox()
+        for seconds, text in ((10, "10 seconds (fastest)"), (20, "20 seconds"), (30, "30 seconds (lightest)")):
+            self.interval_combo.addItem(text, seconds)
+        _select(self.interval_combo, settings.ai_check_interval_s)
+        self.interval_combo.setToolTip("Less often uses less CPU, but notices problems later.")
+        watch_form.addRow("Check every", self.interval_combo)
+
+        self.sound_combo = QComboBox()
+        self.sound_combo.addItem("Alarm until I respond (failures), chime otherwise", "alarm")
+        self.sound_combo.addItem("Chime once", "beep")
+        self.sound_combo.addItem("Silent", "off")
+        _select(self.sound_combo, settings.ai_sound)
+        watch_form.addRow("Alert sound", self.sound_combo)
+        self.notify_check = QCheckBox("Show Windows notifications")
+        self.notify_check.setChecked(settings.ai_notifications)
+        watch_form.addRow(self.notify_check)
+        self.test_alert_btn = QPushButton("Test alert")
+        self.test_alert_btn.setToolTip("Shows the alert and plays the sound with the settings above.")
+        self.test_alert_btn.clicked.connect(self._on_test_alert)
+        watch_form.addRow(self.test_alert_btn)
+
         self.sound_check = QCheckBox("Also alert me about unusual printer sounds")
         self.sound_check.setChecked(settings.sound_alerts)
         self.sound_check.setToolTip(
@@ -274,6 +310,7 @@ class SettingsDialog(QDialog):
         column.addStretch(1)
 
         self.watch_check.toggled.connect(self._refresh_watch)
+        self.auto_pause_check.toggled.connect(self._refresh_watch)
         if self._watch is not None:
             self._watch.download_progress.connect(self._on_download_progress)
             self._watch.download_finished.connect(self._on_download_finished)
@@ -304,8 +341,28 @@ class SettingsDialog(QDialog):
         self.remove_model_btn.setVisible(installed and not downloading)
         self.download_bar.setVisible(downloading)
         on = self.watch_check.isChecked()
-        for widget in (self.auto_pause_check, self.sensitivity_combo, self.sound_check):
+        for widget in (
+            self.auto_pause_check,
+            self.sensitivity_combo,
+            self.sound_check,
+            self.alert_level_combo,
+            self.pause_after_combo,
+            self.interval_combo,
+        ):
             widget.setEnabled(on)
+        self.pause_after_combo.setEnabled(on and self.auto_pause_check.isChecked())
+
+    def _on_test_alert(self) -> None:
+        """Try the sound/notification choices as currently picked (unsaved)."""
+        if self._watch is None:
+            return
+        s = self._settings
+        saved = (s.ai_sound, s.ai_notifications)
+        s.ai_sound, s.ai_notifications = self.sound_combo.currentData(), self.notify_check.isChecked()
+        try:
+            self._watch.test_alert()
+        finally:
+            s.ai_sound, s.ai_notifications = saved
 
     def _on_download(self) -> None:
         if self._watch is None:
@@ -438,6 +495,11 @@ class SettingsDialog(QDialog):
         s.ai_auto_pause = self.auto_pause_check.isChecked()
         s.ai_sensitivity = self.sensitivity_combo.currentData()
         s.sound_alerts = self.sound_check.isChecked()
+        s.ai_alert_level = self.alert_level_combo.currentData()
+        s.ai_pause_after_s = self.pause_after_combo.currentData()
+        s.ai_check_interval_s = self.interval_combo.currentData()
+        s.ai_sound = self.sound_combo.currentData()
+        s.ai_notifications = self.notify_check.isChecked()
         mac =self.camera_combo.currentData()
         if mac:
             s.camera_mac = mac

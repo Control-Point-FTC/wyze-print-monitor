@@ -270,6 +270,10 @@ class AlertBar(QFrame):
         texts.addWidget(self.title)
         texts.addWidget(self.text)
         row.addLayout(texts, 1)
+        self.silence_btn = QPushButton("\U0001F507 Silence")
+        self.silence_btn.setObjectName("plain")
+        self.silence_btn.setToolTip("Stop the alarm sound (the alert stays)")
+        self.silence_btn.hide()
         self.view_btn = QPushButton("View snapshot")
         self.view_btn.setObjectName("plain")
         self.fine_btn = QPushButton("Looks fine")
@@ -282,7 +286,7 @@ class AlertBar(QFrame):
         self.stop_btn = QPushButton("Stop print…")
         self.stop_btn.setObjectName("danger")
         self.stop_btn.setToolTip("Asks before stopping")
-        for button in (self.view_btn, self.fine_btn, self.pause_btn, self.resume_btn, self.stop_btn):
+        for button in (self.silence_btn, self.view_btn, self.fine_btn, self.pause_btn, self.resume_btn, self.stop_btn):
             button.setCursor(Qt.PointingHandCursor)
             row.addWidget(button, 0, Qt.AlignVCenter)
         self.hide()

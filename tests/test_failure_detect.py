@@ -122,3 +122,15 @@ def test_draw_detections_returns_a_marked_copy():
     out = draw_detections(frame, [Detection(0.9, (0.1, 0.1, 0.5, 0.5)), Detection(0.1, (0.6, 0.6, 0.9, 0.9))])
     assert frame.sum() == 0 and out.sum() > 0
     assert out[70:90, 130:170].sum() == 0  # low-confidence box not drawn
+
+
+def test_pause_delay_setting():
+    assert fd.confirm_checks(30, 10) == 3
+    assert fd.confirm_checks(60, 10) == 6
+    assert fd.confirm_checks(30, 20) == 2
+    assert fd.confirm_checks(120, 30) == 4
+    scorer = FailureScorer(pause_confirm_checks=6)
+    _feed(scorer, 0.0, 60)
+    levels = _feed(scorer, 2.5, 30)
+    first_failure = levels.index(FAILURE)
+    assert levels[first_failure - 5 : first_failure] == [WARNING] * 5

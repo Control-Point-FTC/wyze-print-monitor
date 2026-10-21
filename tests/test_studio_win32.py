@@ -83,3 +83,52 @@ def test_may_control_print_only_for_the_cameras_printer():
     assert may_control_print(None, 1, 2) is False  # selection never read yet
     assert may_control_print(True, 0, 2) is False  # "any printer" with two: can't tell
     assert may_control_print(True, 0, 1) is True
+
+
+def test_print_status_words():
+    from wyze_print_monitor.studio_win32 import classify_print_status
+
+    assert classify_print_status("Printing") == "running"
+    assert classify_print_status("Heating") == "running"
+    assert classify_print_status("Transferring 45%") == "running"
+    assert classify_print_status("Paused") == "paused"
+    assert classify_print_status("Completed") == "idle"
+    assert classify_print_status("N/A") is None
+    assert classify_print_status("") is None
+
+
+def test_status_is_the_label_after_the_separator():
+    from wyze_print_monitor.studio_win32 import status_from_bar
+
+    bar = [(559, "Printing"), (240, "Main Robot Assembly - Intake Funnel.gcode"), (544, "|")]
+    assert status_from_bar(bar) == "Printing"
+    assert status_from_bar([(240, "N/A")]) == ""  # idle card: no status
+
+
+# The real eufyMake Studio bar: Stop at x=1282; Pause and Resume share x=1314.
+STOP, PAUSE, RESUME = 14681784, 527748, 19464576
+
+
+def test_controls_from_bar_while_printing():
+    from wyze_print_monitor.studio_win32 import controls_from_bar
+
+    buttons = [(1314, PAUSE, True), (1282, STOP, True), (1314, RESUME, False)]
+    assert controls_from_bar("running", buttons) == {"stop": STOP, "pause": PAUSE}
+
+
+def test_controls_from_bar_while_paused_and_heating():
+    from wyze_print_monitor.studio_win32 import controls_from_bar
+
+    paused = [(1314, PAUSE, False), (1282, STOP, True), (1314, RESUME, True)]
+    assert controls_from_bar("paused", paused) == {"stop": STOP, "resume": RESUME}
+    heating = [(1314, PAUSE, False), (1282, STOP, True), (1314, RESUME, False)]
+    assert controls_from_bar("running", heating) == {"stop": STOP}  # no Pause yet
+
+
+def test_controls_from_bar_never_guesses():
+    from wyze_print_monitor.studio_win32 import controls_from_bar
+
+    buttons = [(1314, PAUSE, True), (1282, STOP, True)]
+    assert controls_from_bar(None, buttons) == {}  # unknown status
+    assert controls_from_bar("idle", buttons) == {}
+    assert controls_from_bar("running", [(1314, PAUSE, True)]) == {}  # can't tell the slot

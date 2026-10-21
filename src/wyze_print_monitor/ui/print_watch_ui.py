@@ -41,9 +41,20 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 
 from .. import failure_model, studio_win32
 from ..config import redact_credentials_in_url, save_settings
-from ..failure_detect import FAILURE, SENSITIVITY, WARNING, Baseline, FailureScorer, draw_detections
+from ..failure_detect import (
+    CHECK_INTERVALS_S,
+    FAILURE,
+    PAUSE_AFTER_S,
+    SENSITIVITY,
+    WARNING,
+    Baseline,
+    FailureScorer,
+    confirm_checks,
+    draw_detections,
+)
 from ..print_watch import SoundWorker, VisionResult, VisionWorker
 from ..sound_watch import describe as describe_sound
+from .alarm import Alarm
 
 STUDIO_POLL_MS = 3000
 PAUSE_POLL_MS = 1000  # while waiting for Studio to confirm a pause
@@ -160,6 +171,7 @@ class PrintWatch(QObject):
         self._error = ""
         self._download: threading.Thread | None = None
         self._download_cancel = False
+        self.alarm = Alarm(self)
         self._poll = QTimer(self)
         self._poll.setInterval(STUDIO_POLL_MS)
         self._poll.timeout.connect(self._poll_studio)
@@ -213,13 +225,17 @@ class PrintWatch(QObject):
             self._cancel_pause()  # watching or auto-pause was just turned off
         self._stop_workers()
         self._scorer.sensitivity = SENSITIVITY.get(self.settings.ai_sensitivity, 1.0)
+        interval = self.check_interval()
+        self._scorer.pause_confirm_checks = confirm_checks(self.pause_after(), interval)
         if not self._url:
             self._poll.stop()
             self.status_changed.emit()
             return
         self._error = ""
         if self.enabled():
-            self._vision = VisionWorker(failure_model.model_path(), self._latest_frame, self._scorer, parent=self)
+            self._vision = VisionWorker(
+                failure_model.model_path(), self._latest_frame, self._scorer, interval_s=interval, parent=self
+            )
             self._vision.checked.connect(self._on_checked)
             self._vision.failed.connect(self._on_failed)
             self._vision.start(VisionWorker.LowPriority)
@@ -252,6 +268,7 @@ class PrintWatch(QObject):
         self._save_baseline()
 
     def shutdown(self) -> None:
+        self.alarm.stop()
         self._poll.stop()
         self._download_cancel = True
         self._stop_workers()
@@ -275,6 +292,27 @@ class PrintWatch(QObject):
                 save_settings(self.settings)
             except OSError:
                 pass
+
+    def check_interval(self) -> int:
+        value = self.settings.ai_check_interval_s
+        return value if value in CHECK_INTERVALS_S else CHECK_INTERVALS_S[0]
+
+    def pause_after(self) -> int:
+        value = self.settings.ai_pause_after_s
+        return value if value in PAUSE_AFTER_S else PAUSE_AFTER_S[0]
+
+    def silence(self) -> None:
+        self.alarm.stop()
+
+    def test_alert(self) -> None:
+        """Show / play exactly what a failure alert does, without a failure."""
+        self._raise(
+            "test",
+            "Test alert",
+            "This is how Print watch tells you a print looks like it failed. Click Dismiss to stop it.",
+            None,
+            urgent=True,
+        )
 
     def _reset_session(self) -> None:
         """Fresh short-term history for the model and the sound check. Both
@@ -432,7 +470,7 @@ class PrintWatch(QObject):
                 "Check the printer, then Resume or Stop.",
                 None,
                 snapshot=request.snapshot,
-                urgent=False,
+                urgent=True,
             )
         else:
             self._raise(
@@ -446,6 +484,7 @@ class PrintWatch(QObject):
 
     def pause_print(self) -> bool:
         """The user's Pause button: same verified, confirmed path."""
+        self.alarm.stop()
         if self._pause is not None:
             return True
         snapshot = self.alert.snapshot if self.alert else ""
@@ -455,6 +494,7 @@ class PrintWatch(QObject):
         return True
 
     def resume_print(self) -> bool:
+        self.alarm.stop()
         hwnd = self._verified_control("resume")
         ok = bool(hwnd) and studio_win32.press(hwnd)
         if ok:
@@ -463,6 +503,7 @@ class PrintWatch(QObject):
 
     def stop_print(self, parent: QWidget | None = None) -> bool:
         """Stop — only after the user confirms (Studio may ask again)."""
+        self.alarm.stop()
         if not self._verified_control("stop"):
             return False
         answer = QMessageBox.warning(
@@ -502,7 +543,7 @@ class PrintWatch(QObject):
             return  # "Looks fine": quiet, failures included
         if result.level == FAILURE:
             self._on_failure(result)
-        elif result.level == WARNING:
+        elif result.level == WARNING and self.settings.ai_alert_level != "failures":
             if now - self._last_warning >= WARNING_REPEAT_S and (self.alert is None or self.alert.severity == "sound"):
                 self._last_warning = now
                 self._raise(
@@ -572,7 +613,7 @@ class PrintWatch(QObject):
         urgent: bool | None = None,
         quiet: bool = False,
     ) -> None:
-        if not snapshot and severity != "pausing":
+        if not snapshot and severity not in ("pausing", "test"):
             snapshot = self._save_snapshot(result, severity)
         c = self._view.controls if self._view.ours else {}
         alert = Alert(
@@ -588,10 +629,16 @@ class PrintWatch(QObject):
         self._set_alert(alert)
         if quiet:
             return
-        self.notify.emit(title, message)
-        _beep(severity in ("failure", "pausing", "pause_failed") if urgent is None else urgent)
+        if self.settings.ai_notifications:
+            self.notify.emit(title, message)
+        if urgent is None:
+            urgent = severity in ("failure", "pausing", "pause_failed")
+        self.alarm.play(self.settings.ai_sound, urgent)
 
     def _set_alert(self, alert: Alert | None) -> None:
+        # A new or cleared alert ends the old one's alarm (_raise starts the
+        # new one's sound right after).
+        self.alarm.stop()
         self.alert = alert
         self.alert_changed.emit(alert)
 
@@ -689,12 +736,3 @@ def _risk_word(risk: float) -> str:
     if risk >= 1 / 3:
         return "something may be wrong"
     return "all good"
-
-
-def _beep(urgent: bool) -> None:
-    try:
-        import winsound
-
-        winsound.MessageBeep(winsound.MB_ICONHAND if urgent else winsound.MB_ICONEXCLAMATION)
-    except (ImportError, RuntimeError):
-        pass

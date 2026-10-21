@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import math
+
 import cv2
 import numpy as np
 
@@ -43,6 +45,15 @@ PAUSE_CONFIRM_CHECKS = 3  # failure must hold this many checks in a row
 OK, WARNING, FAILURE = "ok", "warning", "failure"
 
 SENSITIVITY = {"low": 0.8, "normal": 1.0, "high": 1.2}
+CHECK_INTERVALS_S = (10, 20, 30)
+PAUSE_AFTER_S = (30, 60, 120)
+
+
+def confirm_checks(pause_after_s: float, interval_s: float) -> int:
+    """How many failing checks in a row make "held for pause_after_s"."""
+    if interval_s <= 0:
+        return PAUSE_CONFIRM_CHECKS
+    return max(2, math.ceil(pause_after_s / interval_s))
 
 
 # ------------------------------------------------------------------ model I/O
@@ -131,6 +142,7 @@ class FailureScorer:
     frames: int = 0  # checks this session
     failure_streak: int = 0
     last_p: float = 0.0
+    pause_confirm_checks: int = PAUSE_CONFIRM_CHECKS
 
     def reset_session(self) -> None:
         """A new print (or watching resumed): forget short-term history."""
@@ -151,7 +163,7 @@ class FailureScorer:
 
         if self._failing(ESCALATING_FACTOR):
             self.failure_streak += 1
-            if self.failure_streak >= PAUSE_CONFIRM_CHECKS:
+            if self.failure_streak >= self.pause_confirm_checks:
                 return FAILURE
             return WARNING  # very likely, but not sure enough to pause yet
         self.failure_streak = 0

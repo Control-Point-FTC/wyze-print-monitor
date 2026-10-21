@@ -27,7 +27,18 @@ PRINTER_LIST_LABEL = "My Printer"
 
 Rect = tuple[int, int, int, int]  # left, top, width, height (physical px)
 
-# Labels of the print controls on Studio's Device tab (Progress card).
+PROGRESS_LABEL = "Progress"
+
+# Studio's print status label (Progress card's bottom bar: "<file> | Printing").
+STATUS_RUNNING = (
+    "printing", "heating", "preheating", "leveling", "levelling", "calibrating",
+    "resuming", "starting", "transferring",
+)
+STATUS_PAUSED = ("paused", "pausing")
+STATUS_IDLE = ("idle", "completed", "complete", "finished", "cancelled", "canceled", "stopped", "failed", "ready", "offline")
+
+# Labels of print-control buttons, for Studio builds that label them
+# (the current eufyMake Studio uses unlabeled icon buttons instead).
 CONTROL_LABELS = {
     "pause": ("pause", "pause print", "pause printing"),
     "resume": ("resume", "resume print", "resume printing", "continue"),
@@ -47,6 +58,52 @@ def classify_control(text: str) -> str | None:
         if label in labels:
             return kind
     return None
+
+
+def classify_print_status(text: str) -> str | None:
+    """"running" / "paused" / "idle" for Studio's status label; None when
+    it's something we don't know (then we watch, but press nothing)."""
+    words = " ".join(text.split()).strip().lower()
+    if not words:
+        return None
+    for kind, names in (("paused", STATUS_PAUSED), ("running", STATUS_RUNNING), ("idle", STATUS_IDLE)):
+        if any(words == name or words.startswith(name + " ") for name in names):
+            return kind
+    return None
+
+
+def status_from_bar(statics: list[tuple[int, str]]) -> str:
+    """The status text from the bottom bar's labels ((x, text) pairs):
+    "<file name> | <status>" — the label after the "|" separator."""
+    texts = [text for _x, text in sorted(statics)]
+    if "|" in texts:
+        after = texts[texts.index("|") + 1 :]
+        return after[0] if after else ""
+    return texts[-1] if len(texts) >= 2 else ""
+
+
+def controls_from_bar(status: str | None, buttons: list[tuple[int, int, bool]]) -> dict[str, int]:
+    """Studio's unlabeled icon buttons -> {"stop", "pause" | "resume": hwnd}.
+
+    ``buttons`` are all of the bar's icon buttons, shown or not, as (x,
+    hwnd, usable). They sit in two slots: Stop on the left; Pause and
+    Resume share the right-hand slot (Studio shows one at a time, and e.g.
+    no Pause while still heating). Which one the right slot holds is only
+    trusted from a *known* status: a wrong guess could resume a paused
+    print, so an unknown status exposes nothing.
+    """
+    xs = sorted({x for x, _hwnd, _usable in buttons})
+    if status not in ("running", "paused") or len(xs) < 2:
+        return {}
+    found: dict[str, int] = {}
+    for x, hwnd, usable in sorted(buttons):
+        if not usable:
+            continue
+        if x == xs[0]:
+            found.setdefault("stop", hwnd)
+        elif x == xs[-1]:
+            found.setdefault("pause" if status == "running" else "resume", hwnd)
+    return found
 
 
 def is_selected_row_color(rgb: tuple[int, int, int]) -> bool:
@@ -297,8 +354,52 @@ if sys.platform == "win32":
     _IsWindowEnabled = _sig(_user32.IsWindowEnabled, wt.BOOL, wt.HWND)
     _WM_MOUSEMOVE, _WM_LBUTTONDOWN, _WM_LBUTTONUP, _MK_LBUTTON = 0x0200, 0x0201, 0x0202, 0x0001
 
+    _GetClassNameW = _sig(_user32.GetClassNameW, ctypes.c_int, wt.HWND, wt.LPWSTR, ctypes.c_int)
+    _BM_CLICK = 0x00F5
+
+    def _class(hwnd: int) -> str:
+        buf = ctypes.create_unicode_buffer(64)
+        _GetClassNameW(hwnd, buf, 64)
+        return buf.value
+
+    def read_print_bar(root: int) -> tuple[str | None, dict[str, int]] | None:
+        """The Progress card's bottom bar: (status kind, controls), or None
+        when there's no Progress card on screen.
+
+        Layout (eufyMake Studio): a "Progress" header, and a bar holding
+        "<file name>", "|", "<status>" and two unlabeled icon Buttons.
+        """
+        header = next(
+            (h for h in _children(root) if _text(h) == PROGRESS_LABEL and _IsWindowVisible(h)), None
+        )
+        if header is None:
+            return None
+        card = _GetParent(_GetParent(header) or header) or header
+        # All the bar's icon buttons, hidden ones too: they mark the slots.
+        bars: dict[int, list[tuple[int, int, bool]]] = {}
+        for hwnd in _children(card):
+            if _class(hwnd) == "Button" and not _text(hwnd):
+                x, _y, w, h = window_rect(hwnd)
+                if 0 < w <= 64 and 0 < h <= 64:
+                    usable = bool(_IsWindowVisible(hwnd) and _IsWindowEnabled(hwnd))
+                    bars.setdefault(_GetParent(hwnd), []).append((x, hwnd, usable))
+        bar = next((p for p, buttons in bars.items() if len({b[0] for b in buttons}) >= 2), None)
+        if bar is None:
+            return None, {}
+        statics = [
+            (window_rect(h)[0], _text(h))
+            for h in _children(bar)
+            if _class(h) == "Static" and _IsWindowVisible(h) and _text(h)
+        ]
+        status = classify_print_status(status_from_bar(statics))
+        return status, controls_from_bar(status, bars[bar])
+
     def find_print_controls(top: int) -> dict[str, int]:
-        """Studio's visible print-control buttons: {"pause"|"resume"|"stop": hwnd}."""
+        """Studio's print-control buttons: {"pause"|"resume"|"stop": hwnd}."""
+        bar = read_print_bar(top)
+        if bar is not None and bar[1]:
+            return bar[1]
+        # Studio builds with labeled buttons.
         found: dict[str, int] = {}
         for hwnd in _children(top):
             kind = classify_control(_text(hwnd))
@@ -313,6 +414,9 @@ if sys.platform == "win32":
         clicks to it (asynchronous, so a hung Studio can't block us)."""
         if not is_window(hwnd):
             return False
+        if _class(hwnd) == "Button":
+            # A native button: BM_CLICK is its own "clicked" (posted, not sent).
+            return bool(_PostMessageW(hwnd, _BM_CLICK, 0, 0))
         _x, _y, w, h = window_rect(hwnd)
         point = ((h // 2) << 16) | (w // 2 & 0xFFFF)
         ok = _PostMessageW(hwnd, _WM_MOUSEMOVE, 0, point)
